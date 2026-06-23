@@ -36,6 +36,9 @@ int main() {
     GaloisKeys galois_keys;
     keygen.create_galois_keys(galois_keys);
 
+    RelinKeys relin_keys;
+    keygen.create_relin_keys(relin_keys);
+
     // ==========================================
     // Variable Definitions
     // ==========================================
@@ -113,18 +116,21 @@ int main() {
     
     // Multiply with rotation by L/2 = 4
     Ciphertext rotated_4_ct;
-    evaluator.rotate_vector(original_ct, 4, galois_keys, rotated_4_ct);
+    evaluator.rotate_rows(original_ct, 4, galois_keys, rotated_4_ct);
     evaluator.multiply_inplace(bit_equality_ciphertext, rotated_4_ct);
+    evaluator.relinearize_inplace(bit_equality_ciphertext, relin_keys);
 
     // Multiply with rotation by L/4 = 2
     Ciphertext rotated_2_ct;
-    evaluator.rotate_vector(original_ct, 2, galois_keys, rotated_2_ct);
+    evaluator.rotate_rows(original_ct, 2, galois_keys, rotated_2_ct);
     evaluator.multiply_inplace(bit_equality_ciphertext, rotated_2_ct);
+    evaluator.relinearize_inplace(bit_equality_ciphertext, relin_keys);
 
     // Multiply with rotation by L/8 = 1
     Ciphertext rotated_1_ct;
-    evaluator.rotate_vector(original_ct, 1, galois_keys, rotated_1_ct);
+    evaluator.rotate_rows(original_ct, 1, galois_keys, rotated_1_ct);
     evaluator.multiply_inplace(bit_equality_ciphertext, rotated_1_ct);
+    evaluator.relinearize_inplace(bit_equality_ciphertext, relin_keys);
 
     return 0;
 }
