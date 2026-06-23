@@ -90,7 +90,7 @@ int main() {
     // ==========================================
     // 4. Mask + Bit Equality
     // ==========================================
-    vector<uint64_t> mask_segment = create_mask_segment(text_length * bit_length, num_tracks * bit_length);
+    vector<uint64_t> mask = create_mask(num_tracks * bit_length, text_length * bit_length, pattern_length, poly_modulus_degree);
 
 
     return 0;

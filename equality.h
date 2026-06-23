@@ -37,7 +37,7 @@ std::vector<uint64_t> create_base_mask(size_t num_ones, size_t mask_segment_size
     
     // Repeat the mask pattern num_blocks times
     for (size_t i = 0; i < num_segments; ++i) {
-        base_mask.insert(base_mask.end(), base_mask.begin(), base_mask.end());
+        base_mask.insert(base_mask.end(), mask_segment.begin(), mask_segment.end());
     }
     
     return base_mask;
@@ -51,7 +51,7 @@ std::vector<uint64_t> create_base_mask(size_t num_ones, size_t mask_segment_size
  * @param poly_modulus_degree Determines the length of the full mask and num_copies to be made
  * @return Vector with repeating mask pattern (mask|mask|...|mask)
  */
-std::vector<uint64_t> create_mask(size_t num_ones, size_t mask_segment_size, size_t num_segments, size_t poly_modulus_degree) {
+std::vector<uint64_t> create_mask(size_t num_ones, size_t mask_segment_size, size_t num_segments, size_t poly_modulus_degree, bool verbose) {
 
     std::vector<uint64_t> mask(poly_modulus_degree, 0);
     std::vector<uint64_t> base_mask = create_base_mask(num_ones, mask_segment_size, num_segments);
@@ -59,7 +59,7 @@ std::vector<uint64_t> create_mask(size_t num_ones, size_t mask_segment_size, siz
     size_t num_copies = 0;
     size_t total_filled_elements = 0;
     size_t zeroes_left_at_end = poly_modulus_degree;
-    size_t base_mask_size = base_mask.size()
+    size_t base_mask_size = base_mask.size();
 
     if (base_mask_size > 0) {
         num_copies = poly_modulus_degree / base_mask_size;
@@ -71,6 +71,19 @@ std::vector<uint64_t> create_mask(size_t num_ones, size_t mask_segment_size, siz
             std::copy(base_mask.begin(), base_mask.end(), destination);
             destination += base_mask_size;
         }
+    }
+
+    if (verbose) {
+        std::cout << "\n=== Mask Creation Statistics ===\n";
+        std::cout << "Mask segment structure:\n";
+        std::cout << "  - Ones (HL):           " << num_ones << " bits\n";
+        std::cout << "  - Zeros:               " << (mask_segment_size - num_ones) << " bits\n";
+        std::cout << "  - Segment size:        " << mask_segment_size << " bits\n";
+        std::cout << "  - Number of segments:  " << num_segments << "\n";
+        std::cout << "Base mask size:          " << base_mask_size << " bits\n";
+        std::cout << "Full copies generated:   " << num_copies << "\n";
+        std::cout << "Total bits filled:       " << total_filled_elements << " / " << poly_modulus_degree << "\n";
+        std::cout << "Trailing zeroes:         " << zeroes_left_at_end << " bits\n";
     }
     
     return mask;
