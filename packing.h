@@ -138,4 +138,78 @@ std::vector<uint64_t> pack_and_pad(const std::vector<uint64_t>& base_plaintext,
     return full_plaintext;
 }
 
+/**
+ * @brief Creates base pattern vector
+ * @param pattern Pattern string to convert
+ * @param bit_length Number of bits per character (L)
+ * @param num_tracks Number of times to repeat each character (H)
+ * @param text_length Length of text (n)
+ * @return Pattern vector with structure [char1_bits × H   padding 1s| char2_bits × H   padding 1s| ... ]
+ */
+std::vector<uint64_t> create_base_pattern(const std::string& pattern, int bit_length, int num_tracks, int text_length) {
+    int pattern_length = pattern.size();
+    std::vector<uint64_t> base_pattern(text_length * pattern_length * bit_length, 1);
+    auto destination = base_pattern.begin();
+
+    for (const char c: pattern) {
+        // Repeat this character's bits num_tracks times
+        // Direct bit conversion - no temporary allocations
+        for (size_t i = 0; i < num_tracks; ++i) {
+            // Convert character to bits: MSB first (bit_length-1 down to 0)
+            for (int bit_pos = bit_length - 1; bit_pos >= 0; --bit_pos) {
+                *destination++ = (c >> bit_pos) & 1;
+            }
+        }
+
+        // Skip remaining space (already initialized to 1s)
+        destination += (text_length - num_tracks) * bit_length;
+    }
+
+    return base_pattern;
+}
+
+
+/**
+ * @brief Packs multiple pattern vectors sequentially into one large vector
+ * @param all_patterns Vector of pattern vectors to pack
+ * @param poly_modulus_degree Target size for the output vector
+ * @param verbose If true, prints packing statistics
+ * @return Packed vector with structure [pattern1 | pattern2 | ... | zeroes]
+ */
+std::vector<uint64_t> pack_patterns(const std::vector<std::vector<uint64_t>>& all_patterns, 
+                                    size_t poly_modulus_degree, 
+                                    bool verbose = true) {
+    std::vector<uint64_t> packed_patterns(poly_modulus_degree, 0);
+    auto destination = packed_patterns.begin();
+    size_t total_bits_packed = 0;
+
+    for (const std::vector<uint64_t>& pattern : all_patterns) {
+        size_t pattern_length = pattern.size();
+        
+        // Check if we have enough space
+        if (total_bits_packed + pattern_length > poly_modulus_degree) {
+            if (verbose) {
+                std::cerr << "Warning: Not enough space to pack all patterns!\n";
+                std::cerr << "  Needed: " << (total_bits_packed + pattern_length) 
+                          << " / Available: " << poly_modulus_degree << "\n";
+            }
+            break;
+        }
+        
+        // Copy pattern into packed vector
+        std::copy(pattern.begin(), pattern.end(), destination);
+        destination += pattern_length;
+        total_bits_packed += pattern_length;
+    }
+
+    if (verbose) {
+        std::cout << "\n=== Pattern Packing Statistics ===\n";
+        std::cout << "Number of patterns:      " << all_patterns.size() << "\n";
+        std::cout << "Total bits packed:       " << total_bits_packed << " / " << poly_modulus_degree << "\n";
+        std::cout << "Trailing zeroes:         " << (poly_modulus_degree - total_bits_packed) << " bits\n";
+    }
+
+    return packed_patterns;
+}
+
 #endif // PACKING_H

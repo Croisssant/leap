@@ -89,4 +89,57 @@ std::vector<uint64_t> create_mask(size_t num_ones, size_t mask_segment_size, siz
     return mask;
 }
 
+/**
+ * @brief Performs homomorphic XNOR operation: ct × pt + (1-ct) × (1-pt)
+ * This checks bit equality in encrypted domain
+ * @param context SEAL context
+ * @param batch_encoder Batch encoder for encoding plaintext
+ * @param evaluator Evaluator for homomorphic operations
+ * @param ciphertext Input ciphertext (ct)
+ * @param pattern_vector Pattern vector (pt)
+ * @return Ciphertext containing equality results (1 where bits match, 0 otherwise)
+ */
+seal::Ciphertext xnor(seal::SEALContext& context,
+                                   seal::BatchEncoder& batch_encoder,
+                                   seal::Evaluator& evaluator,
+                                   const seal::Ciphertext& ciphertext,
+                                   const std::vector<uint64_t>& pattern_vector) {
+    // Encode pattern vector as plaintext
+    seal::Plaintext pt_plain;
+    batch_encoder.encode(pattern_vector, pt_plain);
+    
+    // Create plaintext for 1 (all ones)
+    std::vector<uint64_t> ones(pattern_vector.size(), 1);
+    seal::Plaintext ones_plain;
+    batch_encoder.encode(ones, ones_plain);
+    
+    // Compute (1 - ct)
+    seal::Ciphertext ones_minus_ct;
+    evaluator.negate(ciphertext, ones_minus_ct);
+    evaluator.add_plain_inplace(ones_minus_ct, ones_plain);
+    
+    // Compute (1 - pt)
+    seal::Plaintext ones_minus_pt;
+    std::vector<uint64_t> one_minus_pt(pattern_vector.size());
+    for (size_t i = 0; i < pattern_vector.size(); ++i) {
+        one_minus_pt[i] = 1 - pattern_vector[i];
+    }
+    batch_encoder.encode(one_minus_pt, ones_minus_pt);
+    
+    // Compute (1-ct) × (1-pt)
+    seal::Ciphertext ones_minus_ct_times_ones_minus_pt;
+    evaluator.multiply_plain(ones_minus_ct, ones_minus_pt, ones_minus_ct_times_ones_minus_pt);
+
+    // Compute ct × pt
+    seal::Ciphertext ct_times_pt;
+    evaluator.multiply_plain(ciphertext, pt_plain, ct_times_pt);
+    
+    // Result = ct × pt + (1-ct) × (1-pt)
+    seal::Ciphertext result;
+    evaluator.add(ct_times_pt, ones_minus_ct_times_ones_minus_pt, result);
+    
+    return result;
+}
+
+
 #endif // EQUALITY_H

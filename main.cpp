@@ -23,6 +23,7 @@ int main() {
     parms.set_plain_modulus(PlainModulus::Batching(poly_modulus_degree, 20));
 
     SEALContext context(parms);
+    Evaluator evaluator(context);
 
     KeyGenerator keygen(context);
     SecretKey secret_key = keygen.secret_key();
@@ -90,8 +91,17 @@ int main() {
     // ==========================================
     // 4. Mask + Bit Equality
     // ==========================================
-    vector<uint64_t> mask = create_mask(num_tracks * bit_length, text_length * bit_length, pattern_length, poly_modulus_degree);
 
+    // Applying Mask
+    Plaintext encoded_mask;
+    vector<uint64_t> mask = create_mask(num_tracks * bit_length, text_length * bit_length, pattern_length, poly_modulus_degree, verbose);
+    batch_encoder.encode(mask, encoded_mask);
+    evaluator.multiply_plain_inplace(ciphertext, encoded_mask);
+
+    // Bit Equality
+    std::vector<std::vector<uint64_t>> all_patterns = { create_base_pattern(pattern, bit_length, num_tracks, text_length) }; // Expand in the future to loop multi patterns
+    std::vector<uint64_t> packed_patterns = pack_patterns(all_patterns, poly_modulus_degree, verbose);
+    Ciphertext bit_equality_ciphertext = xnor(context, batch_encoder, evaluator, ciphertext, packed_patterns);
 
     return 0;
 }
