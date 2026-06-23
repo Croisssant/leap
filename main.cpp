@@ -39,6 +39,8 @@ int main() {
     RelinKeys relin_keys;
     keygen.create_relin_keys(relin_keys);
 
+    Decryptor decryptor(context, secret_key);
+
     // ==========================================
     // Variable Definitions
     // ==========================================
@@ -111,26 +113,37 @@ int main() {
     // ==========================================
     // 3. Character Equality
     // ==========================================
-    // Save original bit equality ciphertext for rotations
-    Ciphertext original_ct = bit_equality_ciphertext;
     
     // Multiply with rotation by L/2 = 4
     Ciphertext rotated_4_ct;
-    evaluator.rotate_rows(original_ct, 4, galois_keys, rotated_4_ct);
+    evaluator.rotate_rows(bit_equality_ciphertext, 4, galois_keys, rotated_4_ct);
     evaluator.multiply_inplace(bit_equality_ciphertext, rotated_4_ct);
     evaluator.relinearize_inplace(bit_equality_ciphertext, relin_keys);
 
     // Multiply with rotation by L/4 = 2
     Ciphertext rotated_2_ct;
-    evaluator.rotate_rows(original_ct, 2, galois_keys, rotated_2_ct);
+    evaluator.rotate_rows(bit_equality_ciphertext, 2, galois_keys, rotated_2_ct);
     evaluator.multiply_inplace(bit_equality_ciphertext, rotated_2_ct);
     evaluator.relinearize_inplace(bit_equality_ciphertext, relin_keys);
 
     // Multiply with rotation by L/8 = 1
     Ciphertext rotated_1_ct;
-    evaluator.rotate_rows(original_ct, 1, galois_keys, rotated_1_ct);
+    evaluator.rotate_rows(bit_equality_ciphertext, 1, galois_keys, rotated_1_ct);
     evaluator.multiply_inplace(bit_equality_ciphertext, rotated_1_ct);
     evaluator.relinearize_inplace(bit_equality_ciphertext, relin_keys);
+
+    Plaintext decrypted_result;
+    decryptor.decrypt(bit_equality_ciphertext, decrypted_result);
+
+    std::vector<uint64_t> result_vector;
+    batch_encoder.decode(decrypted_result, result_vector);
+
+    if (verbose) {
+      cout << "\n=== Character Match Results (every 8th position) ===\n";
+        for (size_t i = 0; i < 512; i += 8) {  // First window, every character
+            cout << "Char pos " << i/8 << ": " << result_vector[i] << "\n";
+        }
+    }
 
     return 0;
 }
