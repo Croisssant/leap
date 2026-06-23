@@ -14,7 +14,7 @@ using namespace std;
 
 int main() {
     // ==========================================
-    // 1. SET UP ENCRYPTION PARAMETERS
+    // SET UP ENCRYPTION PARAMETERS
     // ==========================================
     EncryptionParameters parms(scheme_type::bfv);
     size_t poly_modulus_degree = 32768;
@@ -32,6 +32,9 @@ int main() {
 
     Encryptor encryptor(context, public_key);
     BatchEncoder batch_encoder(context); 
+
+    GaloisKeys galois_keys;
+    keygen.create_galois_keys(galois_keys);
 
     // ==========================================
     // Variable Definitions
@@ -56,7 +59,7 @@ int main() {
     }
 
     // ==========================================
-    // 2. Rotation
+    // 1. Text Packing
     // ==========================================
     vector<uint64_t> text_in_bits = convert_text_to_bits(text, bit_length);
 
@@ -77,9 +80,7 @@ int main() {
         print_bits_as_string(base_plaintext, bit_length);
     }
 
-    // ==========================================
-    // 3. Multi-Block Packing & Zero-Padding
-    // ==========================================
+    // Packing & Zero-Padding
     vector<uint64_t> full_plaintext = pack_and_pad(base_plaintext, poly_modulus_degree, verbose);
 
     Plaintext plaintext;
@@ -89,7 +90,7 @@ int main() {
     encryptor.encrypt(plaintext, ciphertext);
 
     // ==========================================
-    // 4. Mask + Bit Equality
+    // 2. Mask + Bit Equality
     // ==========================================
 
     // Applying Mask
@@ -102,6 +103,28 @@ int main() {
     std::vector<std::vector<uint64_t>> all_patterns = { create_base_pattern(pattern, bit_length, num_tracks, text_length) }; // Expand in the future to loop multi patterns
     std::vector<uint64_t> packed_patterns = pack_patterns(all_patterns, poly_modulus_degree, verbose);
     Ciphertext bit_equality_ciphertext = xnor(context, batch_encoder, evaluator, ciphertext, packed_patterns);
+
+
+    // ==========================================
+    // 3. Character Equality
+    // ==========================================
+    // Save original bit equality ciphertext for rotations
+    Ciphertext original_ct = bit_equality_ciphertext;
+    
+    // Multiply with rotation by L/2 = 4
+    Ciphertext rotated_4_ct;
+    evaluator.rotate_vector(original_ct, 4, galois_keys, rotated_4_ct);
+    evaluator.multiply_inplace(bit_equality_ciphertext, rotated_4_ct);
+
+    // Multiply with rotation by L/4 = 2
+    Ciphertext rotated_2_ct;
+    evaluator.rotate_vector(original_ct, 2, galois_keys, rotated_2_ct);
+    evaluator.multiply_inplace(bit_equality_ciphertext, rotated_2_ct);
+
+    // Multiply with rotation by L/8 = 1
+    Ciphertext rotated_1_ct;
+    evaluator.rotate_vector(original_ct, 1, galois_keys, rotated_1_ct);
+    evaluator.multiply_inplace(bit_equality_ciphertext, rotated_1_ct);
 
     return 0;
 }
