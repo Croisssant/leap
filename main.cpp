@@ -47,10 +47,11 @@ int main() {
     // ==========================================
     string text = "Lorem ipsum dolor sit amet, consectetur adipiscing elit vivamus.";
     string pattern = "vivamus.";
-    int text_length = text.length(); // m
-    int pattern_length = pattern.length(); // n
+    int text_length = text.length(); // n
+    int pattern_length = pattern.length(); // m
     int bit_length = 8; // L: To represent to 8 bit of each char
     int num_tracks = text_length - pattern_length + 1; // H
+    int num_copies = poly_modulus_degree / (bit_length * text_length * pattern_length); // d
     bool verbose = true;
 
     if (verbose) {
@@ -160,6 +161,43 @@ int main() {
         batch_encoder,
         relin_keys
     );
+
+    // ==========================================
+    // 5. Aggregation Across Patterns
+    // ==========================================
+    for (size_t i = (num_copies * text_length * pattern_length * bit_length) / 2; i >= (text_length * pattern_length * bit_length) ; i = i / 2) {
+        Ciphertext rotated_ct;
+        evaluator.rotate_rows(threshold_result, i, galois_keys, rotated_ct);
+        evaluator.add_inplace(threshold_result, rotated_ct);
+    }
+
+    // ==========================================
+    // 6. OR Evaluation Over Tracks
+    // ==========================================
+
+    Ciphertext minus_ct = one_minus_ct(context, batch_encoder, evaluator, threshold_result, poly_modulus_degree);
+
+     for (size_t i = (text_length * bit_length) / 2; i >= bit_length ; i = i / 2) {
+        Ciphertext rotated_ct;
+        evaluator.rotate_rows(minus_ct, i, galois_keys, rotated_ct);
+        evaluator.multiply_inplace(minus_ct, rotated_ct);
+        evaluator.relinearize_inplace(minus_ct, relin_keys);
+    }
+    
+    Ciphertext result_ct = one_minus_ct(context, batch_encoder, evaluator, minus_ct, poly_modulus_degree);
+
+    Plaintext decrypted_result;
+    decryptor.decrypt(result_ct, decrypted_result);
+
+    std::vector<uint64_t> result_vector;
+    batch_encoder.decode(decrypted_result, result_vector);
+
+    if (verbose) {
+      cout << "\n=== Results ===\n";
+        for (size_t i = 0; i < 512; i += 8) {  // First window, every character
+            cout << "Char pos " << i/8 << ": " << result_vector[i] << "\n";
+        }
+    }
 
     return 0;
 }

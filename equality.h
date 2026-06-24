@@ -142,4 +142,24 @@ seal::Ciphertext xnor(seal::SEALContext& context,
 }
 
 
+seal::Ciphertext one_minus_ct(seal::SEALContext& context,
+                              seal::BatchEncoder& batch_encoder,
+                              seal::Evaluator& evaluator,
+                              const seal::Ciphertext& ciphertext,
+                              const size_t poly_modulus_degree) {
+
+
+    // Create plaintext for 1 (all ones)
+    std::vector<uint64_t> ones(poly_modulus_degree, 1);
+    seal::Plaintext ones_plain;
+    batch_encoder.encode(ones, ones_plain);
+
+    // Compute (1 - ct)
+    seal::Ciphertext result_ct;
+    evaluator.negate(ciphertext, result_ct);
+    evaluator.add_plain_inplace(result_ct, ones_plain);
+
+    return result_ct;
+}
+
 #endif // EQUALITY_H
