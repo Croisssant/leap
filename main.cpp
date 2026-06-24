@@ -115,21 +115,21 @@ int main() {
     // ==========================================
     
     // Multiply with rotation by L/2 = 4
-    Ciphertext rotated_4_ct;
-    evaluator.rotate_rows(bit_equality_ciphertext, 4, galois_keys, rotated_4_ct);
-    evaluator.multiply_inplace(bit_equality_ciphertext, rotated_4_ct);
+    Ciphertext rotated_L_over_2_ct;
+    evaluator.rotate_rows(bit_equality_ciphertext, bit_length / 2, galois_keys, rotated_L_over_2_ct);
+    evaluator.multiply_inplace(bit_equality_ciphertext, rotated_L_over_2_ct);
     evaluator.relinearize_inplace(bit_equality_ciphertext, relin_keys);
 
     // Multiply with rotation by L/4 = 2
-    Ciphertext rotated_2_ct;
-    evaluator.rotate_rows(bit_equality_ciphertext, 2, galois_keys, rotated_2_ct);
-    evaluator.multiply_inplace(bit_equality_ciphertext, rotated_2_ct);
+    Ciphertext rotated_L_over_4_ct;
+    evaluator.rotate_rows(bit_equality_ciphertext, bit_length / 4, galois_keys, rotated_L_over_4_ct);
+    evaluator.multiply_inplace(bit_equality_ciphertext, rotated_L_over_4_ct);
     evaluator.relinearize_inplace(bit_equality_ciphertext, relin_keys);
 
     // Multiply with rotation by L/8 = 1
-    Ciphertext rotated_1_ct;
-    evaluator.rotate_rows(bit_equality_ciphertext, 1, galois_keys, rotated_1_ct);
-    evaluator.multiply_inplace(bit_equality_ciphertext, rotated_1_ct);
+    Ciphertext rotated_L_over_8_ct;
+    evaluator.rotate_rows(bit_equality_ciphertext, bit_length / 8, galois_keys, rotated_L_over_8_ct);
+    evaluator.multiply_inplace(bit_equality_ciphertext, rotated_L_over_8_ct);
     evaluator.relinearize_inplace(bit_equality_ciphertext, relin_keys);
 
     Plaintext decrypted_result;
