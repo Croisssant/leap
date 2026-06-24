@@ -7,6 +7,7 @@
 #include "seal/seal.h"
 #include "packing.h"
 #include "equality.h"
+#include "threshold.h"
 
 using namespace seal;
 using namespace std;
@@ -132,18 +133,33 @@ int main() {
     evaluator.multiply_inplace(bit_equality_ciphertext, rotated_L_over_8_ct);
     evaluator.relinearize_inplace(bit_equality_ciphertext, relin_keys);
 
-    Plaintext decrypted_result;
-    decryptor.decrypt(bit_equality_ciphertext, decrypted_result);
-
-    std::vector<uint64_t> result_vector;
-    batch_encoder.decode(decrypted_result, result_vector);
-
-    if (verbose) {
-      cout << "\n=== Character Match Results (every 8th position) ===\n";
-        for (size_t i = 0; i < 512; i += 8) {  // First window, every character
-            cout << "Char pos " << i/8 << ": " << result_vector[i] << "\n";
-        }
+    // ==========================================
+    // 4. Summation and Threshold Comparison
+    // ==========================================
+    
+    // Rotation + Summation
+    for (size_t i = (text_length * pattern_length * bit_length) / 2; i >= (pattern_length * bit_length) ; i = i / 2) {
+        Ciphertext rotated_ct;
+        evaluator.rotate_rows(bit_equality_ciphertext, i, galois_keys, rotated_ct);
+        evaluator.add_inplace(bit_equality_ciphertext, rotated_ct);
     }
+
+    
+    // Thresholding
+    // Get plaintext modulus for threshold function
+    uint64_t plain_modulus = parms.plain_modulus().value();
+    
+    // Apply threshold function: GE(x, t) where t = pattern_length
+    // This outputs 1 if x >= pattern_length (full match), 0 otherwise
+    Ciphertext threshold_result = compute_homomorphic_threshold(
+        bit_equality_ciphertext,
+        pattern_length,      // threshold t
+        pattern_length,      // domain m
+        plain_modulus,       // field size q
+        evaluator,
+        batch_encoder,
+        relin_keys
+    );
 
     return 0;
 }
