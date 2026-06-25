@@ -8,15 +8,47 @@
 #include "packing.h"
 #include "equality.h"
 #include "threshold.h"
+#include "utils.h"
 
 using namespace seal;
 using namespace std;
 
 
-int main() {
+int main(int argc, char* argv[]) {
+    // ==========================================
+    // PARSE COMMAND LINE ARGUMENTS
+    // ==========================================
+    ProgramArgs args;
+    
+    try {
+        args = parse_arguments(argc, argv);
+    } catch (const std::exception& e) {
+        cerr << "Error: " << e.what() << "\n\n";
+        print_usage(argv[0]);
+        return 1;
+    }
+    
+    // Read text and patterns from files
+    string text;
+    vector<string> pattern_strings;
+    
+    try {
+        text = read_text_from_file(args.text_file);
+        pattern_strings = read_patterns_from_file(args.patterns_file);
+        
+        cout << "Successfully loaded:\n";
+        cout << "  Text: " << text.length() << " characters from " << args.text_file << "\n";
+        cout << "  Patterns: " << pattern_strings.size() << " pattern(s) from " << args.patterns_file << "\n";
+        cout << "\n";
+    } catch (const std::exception& e) {
+        cerr << "Error: " << e.what() << "\n";
+        return 1;
+    }
+    
     // ==========================================
     // SET UP ENCRYPTION PARAMETERS
     // ==========================================
+    cout << "Generating Encyption Parameters...\n";
     EncryptionParameters parms(scheme_type::bfv);
     size_t poly_modulus_degree = 32768;
     parms.set_poly_modulus_degree(poly_modulus_degree);
@@ -41,27 +73,29 @@ int main() {
     keygen.create_relin_keys(relin_keys);
 
     Decryptor decryptor(context, secret_key);
-
+    cout << "Generated Encyption Parameters!\n";
     // ==========================================
     // Variable Definitions
     // ==========================================
-    string text = "Lorem ipsum dolor sit amet, consectetur adipiscing elit vivamus.";
-    string pattern = "vivamus.";
     int text_length = text.length(); // n
-    int pattern_length = pattern.length(); // m
+    int pattern_length = pattern_strings[0].length(); // m (all patterns have same length)
     int bit_length = 8; // L: To represent to 8 bit of each char
     int num_tracks = text_length - pattern_length + 1; // H
     int num_copies = poly_modulus_degree / (bit_length * text_length * pattern_length); // d
+    int num_patterns = pattern_strings.size(); // K
     bool verbose = true;
 
     if (verbose) {
         cout << "=== Variables ===" << endl;
-        cout << left << setw(19) << "Text (String)"     << ": " << "\"" << text << "\"" << endl;
-        cout << left << setw(19) << "Pattern (String)"  << ": " << "\"" << pattern << "\"" << endl;
-        cout << left << setw(19) << "Text Length (m)"   << ": " << text_length << endl;
-        cout << left << setw(19) << "Pattern Length (n)"<< ": " << pattern_length << endl;
+        cout << left << setw(19) << "Text Length (n)"   << ": " << text_length << endl;
+        cout << left << setw(19) << "Pattern Length (m)"<< ": " << pattern_length << endl;
+        cout << left << setw(19) << "Num Patterns (K)"  << ": " << num_patterns << endl;
         cout << left << setw(19) << "Bit Length (L)"    << ": " << bit_length << endl;
         cout << left << setw(19) << "Num Tracks (H)"    << ": " << num_tracks << endl;
+        cout << "\nPatterns to search:\n";
+        for (size_t i = 0; i < pattern_strings.size(); ++i) {
+            cout << "  " << (i + 1) << ". \"" << pattern_strings[i] << "\"\n";
+        }
         cout << "\n";
     }
 
@@ -106,8 +140,11 @@ int main() {
     batch_encoder.encode(mask, encoded_mask);
     evaluator.multiply_plain_inplace(ciphertext, encoded_mask);
 
-    // Bit Equality
-    std::vector<std::vector<uint64_t>> all_patterns = { create_base_pattern(pattern, bit_length, num_tracks, text_length) }; // Expand in the future to loop multi patterns
+    // Bit Equality - Create patterns for all loaded pattern strings
+    std::vector<std::vector<uint64_t>> all_patterns;
+    for (const std::string& pattern_str : pattern_strings) {
+        all_patterns.push_back(create_base_pattern(pattern_str, bit_length, num_tracks, text_length));
+    }
     std::vector<uint64_t> packed_patterns = pack_patterns(all_patterns, poly_modulus_degree, verbose);
     Ciphertext bit_equality_ciphertext = xnor(context, batch_encoder, evaluator, ciphertext, packed_patterns);
 
@@ -215,10 +252,8 @@ int main() {
     // This sums all K pattern results using binary tree aggregation
     // Only execute when K > 1 (multiple patterns to aggregate)
     
-    size_t num_patterns = all_patterns.size();
-    
     if (num_patterns > 1) {
-        for (size_t i = (num_copies * pattern_length * text_length * bit_length) / 2; 
+        for (size_t i = (num_copies * pattern_length * text_length * bit_length) / 4; 
              i >= (pattern_length * text_length * bit_length); i = i / 2) {
             Ciphertext rotated_ct;
             evaluator.rotate_rows(threshold_result, i, galois_keys, rotated_ct);
