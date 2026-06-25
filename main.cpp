@@ -66,7 +66,7 @@ int main() {
     }
 
     // ==========================================
-    // 1. Text Packing
+    // Text Packing
     // ==========================================
     vector<uint64_t> text_in_bits = convert_text_to_bits(text, bit_length);
 
@@ -97,7 +97,7 @@ int main() {
     encryptor.encrypt(plaintext, ciphertext);
 
     // ==========================================
-    // 2. Mask + Bit Equality
+    // 1. Mask + Bit Equality
     // ==========================================
 
     // Applying Mask
@@ -113,7 +113,7 @@ int main() {
 
 
     // ==========================================
-    // 3. Character Equality
+    // 2. Character Equality
     // ==========================================
     
     // Multiply with rotation by L/2 = 4
@@ -134,17 +134,47 @@ int main() {
     evaluator.multiply_inplace(bit_equality_ciphertext, rotated_L_over_8_ct);
     evaluator.relinearize_inplace(bit_equality_ciphertext, relin_keys);
 
+    if (verbose) {
+        Plaintext debug_plain;
+        decryptor.decrypt(bit_equality_ciphertext, debug_plain);
+        std::vector<uint64_t> debug_vec;
+        batch_encoder.decode(debug_plain, debug_vec);
+        cout << "\n=== After Character Equality ===\n";
+        cout << "Track matches (1 = all bits matched for this char): ";
+        for (size_t track = 0; track < num_tracks; track++) {
+            cout << debug_vec[track * bit_length] << " ";
+        }
+        cout << "\n";
+    }
+
     // ==========================================
-    // 4. Summation and Threshold Comparison
+    // 3. Summation and Threshold Comparison
     // ==========================================
     
     // Rotation + Summation
-    for (size_t i = (text_length * pattern_length * bit_length) / 2; i >= (pattern_length * bit_length) ; i = i / 2) {
+    // index = RnL/2, RnL/4, ..., nL
+    // Where R=1, n=text_length, L=bit_length
+    // We need to sum across all m pattern windows for each track
+    // So we rotate from (pattern_length * text_length * bit_length)/2 down to (text_length * bit_length)
+    for (size_t i = (pattern_length * text_length * bit_length) / 2; i >= (text_length * bit_length) ; i = i / 2) {
         Ciphertext rotated_ct;
         evaluator.rotate_rows(bit_equality_ciphertext, i, galois_keys, rotated_ct);
         evaluator.add_inplace(bit_equality_ciphertext, rotated_ct);
     }
 
+    
+    if (verbose) {
+        Plaintext debug_plain;
+        decryptor.decrypt(bit_equality_ciphertext, debug_plain);
+        std::vector<uint64_t> debug_vec;
+        batch_encoder.decode(debug_plain, debug_vec);
+        cout << "\n=== After Summation (before threshold) ===\n";
+        cout << "Character match count per track: ";
+        for (size_t track = 0; track < num_tracks; track++) {
+            cout << debug_vec[track * bit_length] << " ";
+        }
+        cout << "\n";
+    }
     
     // Thresholding
     // Get plaintext modulus for threshold function
@@ -152,27 +182,65 @@ int main() {
     
     // Apply threshold function: GE(x, t) where t = pattern_length
     // This outputs 1 if x >= pattern_length (full match), 0 otherwise
+    // IMPORTANT: domain m must be > threshold t for proper polynomial interpolation
     Ciphertext threshold_result = compute_homomorphic_threshold(
         bit_equality_ciphertext,
-        pattern_length,      // threshold t
-        pattern_length,      // domain m
-        plain_modulus,       // field size q
+        pattern_length,          // threshold t = 8
+        2 * pattern_length,      // domain m = 16 (must be > t)
+        plain_modulus,           // field size q
         evaluator,
         batch_encoder,
         relin_keys
     );
 
-    // ==========================================
-    // 5. Aggregation Across Patterns
-    // ==========================================
-    for (size_t i = (num_copies * text_length * pattern_length * bit_length) / 2; i >= (text_length * pattern_length * bit_length) ; i = i / 2) {
-        Ciphertext rotated_ct;
-        evaluator.rotate_rows(threshold_result, i, galois_keys, rotated_ct);
-        evaluator.add_inplace(threshold_result, rotated_ct);
+    if (verbose) {
+        Plaintext debug_plain;
+        decryptor.decrypt(threshold_result, debug_plain);
+        std::vector<uint64_t> debug_vec;
+        batch_encoder.decode(debug_plain, debug_vec);
+        cout << "\n=== After Threshold ===\n";
+        cout << "Pattern match per track (1 = full match): ";
+        for (size_t track = 0; track < num_tracks; track++) {
+            cout << debug_vec[track * bit_length] << " ";
+        }
+        cout << "\n";
     }
 
     // ==========================================
-    // 6. OR Evaluation Over Tracks
+    // 4. Aggregation Across Patterns
+    // ==========================================
+    // Aggregate threshold results across all K patterns using rotation
+    // Each pattern's results are stored in different copies (d copies total)
+    // Rotation indices: (d*m*n*L)/2, (d*m*n*L)/4, ..., down to m*n*L
+    // This sums all K pattern results using binary tree aggregation
+    // Only execute when K > 1 (multiple patterns to aggregate)
+    
+    size_t num_patterns = all_patterns.size();
+    
+    if (num_patterns > 1) {
+        for (size_t i = (num_copies * pattern_length * text_length * bit_length) / 2; 
+             i >= (pattern_length * text_length * bit_length); i = i / 2) {
+            Ciphertext rotated_ct;
+            evaluator.rotate_rows(threshold_result, i, galois_keys, rotated_ct);
+            evaluator.add_inplace(threshold_result, rotated_ct);
+        }
+    }
+    
+    if (verbose) {
+        Plaintext debug_plain;
+        decryptor.decrypt(threshold_result, debug_plain);
+        std::vector<uint64_t> debug_vec;
+        batch_encoder.decode(debug_plain, debug_vec);
+        cout << "\n=== After Pattern Aggregation (Step 4) ===\n";
+        cout << "Aggregated matches per track (any pattern): ";
+        for (size_t track = 0; track < num_tracks; track++) {
+            cout << debug_vec[track * bit_length] << " ";
+        }
+        cout << "\n";
+    }
+
+    // ==========================================
+    // 5. OR Evaluation Over Tracks
     // ==========================================
 
     Ciphertext minus_ct = one_minus_ct(context, batch_encoder, evaluator, threshold_result, poly_modulus_degree);
@@ -193,9 +261,11 @@ int main() {
     batch_encoder.decode(decrypted_result, result_vector);
 
     if (verbose) {
-      cout << "\n=== Results ===\n";
-        for (size_t i = 0; i < 512; i += 8) {  // First window, every character
-            cout << "Char pos " << i/8 << ": " << result_vector[i] << "\n";
+        cout << "\n=== Final Result ===\n";
+        if (result_vector[0] == 1) {
+            cout << "Pattern FOUND: result_vector[0] = " << result_vector[0] << "\n";
+        } else {
+            cout << "Pattern NOT FOUND: result_vector[0] = " << result_vector[0] << "\n";
         }
     }
 
