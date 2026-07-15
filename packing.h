@@ -6,6 +6,7 @@
 #include <string>
 #include <algorithm>
 #include <cstdint>
+#include <utility>
 
 /**
  * @brief Prints a vector of bits as a readable string
@@ -166,6 +167,45 @@ std::vector<uint64_t> create_base_pattern(const std::string& pattern, int bit_le
     }
 
     return base_pattern;
+}
+
+/**
+ * @brief Creates pattern and inverse-pattern vectors, with wildcard support.
+ * @return Pair of vectors: first is P, second is 1-P. For wildcard slots both are 1.
+ */
+std::pair<std::vector<uint64_t>, std::vector<uint64_t>> create_base_pattern_pair(
+    const std::string& pattern,
+    int bit_length,
+    int num_tracks,
+    int text_length,
+    char wildcard = '*') {
+    int pattern_length = pattern.size();
+    std::vector<uint64_t> base_pattern(text_length * pattern_length * bit_length, 1);
+    std::vector<uint64_t> base_inverse_pattern(text_length * pattern_length * bit_length, 0);
+    auto pattern_destination = base_pattern.begin();
+    auto inverse_destination = base_inverse_pattern.begin();
+
+    for (const char c: pattern) {
+        bool is_wildcard = (c == wildcard);
+
+        for (size_t i = 0; i < num_tracks; ++i) {
+            for (int bit_pos = bit_length - 1; bit_pos >= 0; --bit_pos) {
+                if (is_wildcard) {
+                    *pattern_destination++ = 1;
+                    *inverse_destination++ = 1;
+                } else {
+                    uint64_t bit = (c >> bit_pos) & 1;
+                    *pattern_destination++ = bit;
+                    *inverse_destination++ = 1 - bit;
+                }
+            }
+        }
+
+        pattern_destination += (text_length - num_tracks) * bit_length;
+        inverse_destination += (text_length - num_tracks) * bit_length;
+    }
+
+    return {base_pattern, base_inverse_pattern};
 }
 
 

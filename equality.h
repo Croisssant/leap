@@ -141,6 +141,38 @@ seal::Ciphertext xnor(seal::SEALContext& context,
     return result;
 }
 
+seal::Ciphertext xnor(seal::SEALContext& context,
+                      seal::BatchEncoder& batch_encoder,
+                      seal::Evaluator& evaluator,
+                      const seal::Ciphertext& ciphertext,
+                      const std::vector<uint64_t>& pattern_vector,
+                      const std::vector<uint64_t>& inverse_pattern_vector) {
+    seal::Plaintext pt_plain;
+    batch_encoder.encode(pattern_vector, pt_plain);
+
+    std::vector<uint64_t> ones(pattern_vector.size(), 1);
+    seal::Plaintext ones_plain;
+    batch_encoder.encode(ones, ones_plain);
+
+    seal::Ciphertext ones_minus_ct;
+    evaluator.negate(ciphertext, ones_minus_ct);
+    evaluator.add_plain_inplace(ones_minus_ct, ones_plain);
+
+    seal::Plaintext inverse_pt_plain;
+    batch_encoder.encode(inverse_pattern_vector, inverse_pt_plain);
+
+    seal::Ciphertext ones_minus_ct_times_ones_minus_pt;
+    evaluator.multiply_plain(ones_minus_ct, inverse_pt_plain, ones_minus_ct_times_ones_minus_pt);
+
+    seal::Ciphertext ct_times_pt;
+    evaluator.multiply_plain(ciphertext, pt_plain, ct_times_pt);
+
+    seal::Ciphertext result;
+    evaluator.add(ct_times_pt, ones_minus_ct_times_ones_minus_pt, result);
+
+    return result;
+}
+
 
 seal::Ciphertext one_minus_ct(seal::SEALContext& context,
                               seal::BatchEncoder& batch_encoder,

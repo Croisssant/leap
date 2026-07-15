@@ -4,6 +4,10 @@
 #include <string>
 #include <iomanip>
 #include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <numeric>
+#include <stdexcept>
 #include "seal/seal.h"
 #include "packing.h"
 #include "equality.h"
@@ -13,11 +17,183 @@
 using namespace seal;
 using namespace std;
 
+using Clock = std::chrono::steady_clock;
+
+struct StepStats {
+    size_t rot_count = 0;
+    double elapsed_ms = 0.0;
+    int noise_budget_bits = -1;
+};
+
+double elapsed_ms_since(const Clock::time_point& start_time) {
+    return std::chrono::duration<double, std::milli>(Clock::now() - start_time).count();
+}
+
+void print_step_stats(const std::string& step_name, const StepStats& stats) {
+    cout << "\n=== " << step_name << " Metrics ===\n";
+    cout << "rot_count: " << stats.rot_count << "\n";
+    cout << "time_ms:   " << fixed << setprecision(3) << stats.elapsed_ms << "\n";
+    cout << "noise_budget_bits: ";
+    if (stats.noise_budget_bits >= 0) {
+        cout << stats.noise_budget_bits << "\n";
+    } else {
+        cout << "N/A\n";
+    }
+}
+
+void print_memory_cost(const std::string& name, std::size_t bytes) {
+    double kib = static_cast<double>(bytes) / 1024.0;
+    double mib = kib / 1024.0;
+
+    cout << "\n=== " << name << " Memory Cost ===\n";
+    cout << "bytes: " << bytes << "\n";
+    cout << "KiB:   " << fixed << setprecision(3) << kib << "\n";
+    cout << "MiB:   " << fixed << setprecision(3) << mib << "\n";
+}
+
+void print_time_cost_summary(
+    const std::string& matching_case,
+    const StepStats& text_encode_encrypt_stats,
+    const StepStats& mask_bit_equality_stats,
+    const StepStats& char_equality_stats,
+    const StepStats& summation_stats,
+    const StepStats& threshold_stats,
+    const StepStats& aggregation_stats,
+    const StepStats& or_stats,
+    const StepStats& final_decrypt_stats) {
+    cout << "\n=== Time Cost Summary (" << matching_case << ") ===\n";
+    cout << fixed << setprecision(3);
+    cout << left << setw(34) << "Input Encode + Encrypt" << ": "
+         << text_encode_encrypt_stats.elapsed_ms << " ms\n";
+    cout << left << setw(34) << "Step 1 Mask + Bit Equality" << ": "
+         << mask_bit_equality_stats.elapsed_ms << " ms\n";
+    cout << left << setw(34) << "Step 2 Character Equality" << ": "
+         << char_equality_stats.elapsed_ms << " ms\n";
+
+    if (threshold_stats.elapsed_ms > 0.0) {
+        cout << left << setw(34) << "Step 3a Summation" << ": "
+             << summation_stats.elapsed_ms << " ms\n";
+        cout << left << setw(34) << "Step 3b Threshold" << ": "
+             << threshold_stats.elapsed_ms << " ms\n";
+    } else {
+        cout << left << setw(34) << "Step 3 Exact/Wildcard Product" << ": "
+             << summation_stats.elapsed_ms << " ms\n";
+    }
+
+    cout << left << setw(34) << "Step 4 Pattern Aggregation" << ": "
+         << aggregation_stats.elapsed_ms << " ms\n";
+    cout << left << setw(34) << "Step 5 OR Evaluation" << ": "
+         << or_stats.elapsed_ms << " ms\n";
+    cout << left << setw(34) << "Final Decrypt + Decode" << ": "
+         << final_decrypt_stats.elapsed_ms << " ms\n";
+}
+
+std::vector<int> coeff_modulus_bits_for_mode(const std::string& matching_case) {
+    if (matching_case == "exact" || matching_case == "wildcard") {
+        return {60, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 60};
+    }
+
+    return {60, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 60};
+}
+
+std::vector<int> coeff_modulus_bits_for_case(
+    const std::string& matching_case,
+    size_t poly_modulus_degree,
+    size_t num_batches,
+    int text_length) {
+    int target_bits = (matching_case == "exact" || matching_case == "wildcard") ? 620 : 670;
+    int track_levels = static_cast<int>(std::ceil(std::log2(static_cast<double>(text_length))));
+    target_bits += std::max(0, track_levels - 6) * 110;
+
+    std::vector<int> bit_sizes;
+    int remaining = target_bits;
+    while (remaining > 0) {
+        if (remaining >= 60) {
+            bit_sizes.push_back(60);
+            remaining -= 60;
+        } else {
+            bit_sizes.push_back(std::max(30, remaining));
+            remaining = 0;
+        }
+    }
+
+    if (bit_sizes.size() > 1 && bit_sizes.back() < 50) {
+        int spill = bit_sizes.back();
+        bit_sizes.pop_back();
+        bit_sizes.back() += spill;
+        if (bit_sizes.back() > 60) {
+            bit_sizes.back() -= spill;
+            bit_sizes.push_back(spill);
+        }
+    }
+
+    return bit_sizes;
+}
+
+size_t next_power_of_two(size_t value) {
+    size_t result = 1;
+    while (result < value) {
+        result <<= 1;
+    }
+    return result;
+}
+
+size_t choose_poly_modulus_degree(int text_length, int pattern_length, int bit_length, int num_patterns) {
+    size_t base_slots = static_cast<size_t>(text_length) * pattern_length * bit_length;
+    size_t degree = 32768;
+
+    if (base_slots > degree) {
+        throw std::runtime_error(
+            "Requested n and m do not fit in poly_modulus_degree=32768. "
+            "Need n * m * 8 <= 32768."
+        );
+    }
+
+    return degree;
+}
+
+int total_coeff_modulus_bits(const std::vector<int>& bit_sizes) {
+    return std::accumulate(bit_sizes.begin(), bit_sizes.end(), 0);
+}
+
+void rotate_slots(
+    const Ciphertext& input,
+    size_t steps,
+    size_t poly_modulus_degree,
+    Evaluator& evaluator,
+    const GaloisKeys& galois_keys,
+    Ciphertext& destination) {
+    size_t slot_count = poly_modulus_degree;
+    size_t row_size = slot_count / 2;
+    steps %= slot_count;
+
+    if (steps == 0) {
+        destination = input;
+        return;
+    }
+
+    if (steps < row_size) {
+        evaluator.rotate_rows(input, static_cast<int>(steps), galois_keys, destination);
+        return;
+    }
+
+    Ciphertext column_rotated;
+    evaluator.rotate_columns(input, galois_keys, column_rotated);
+    size_t row_steps = steps - row_size;
+    if (row_steps == 0) {
+        destination = std::move(column_rotated);
+    } else {
+        evaluator.rotate_rows(column_rotated, static_cast<int>(row_steps), galois_keys, destination);
+    }
+}
 
 int main(int argc, char* argv[]) {
     // ==========================================
     // PARSE COMMAND LINE ARGUMENTS
     // ==========================================
+    StepStats input_stats;
+    auto step_start_time = Clock::now();
+
     ProgramArgs args;
     
     try {
@@ -44,18 +220,74 @@ int main(int argc, char* argv[]) {
         cerr << "Error: " << e.what() << "\n";
         return 1;
     }
+
+    input_stats.elapsed_ms = elapsed_ms_since(step_start_time);
+    print_step_stats("Input Loading", input_stats);
+
+    // ==========================================
+    // Variable Definitions
+    // ==========================================
+    int text_length = text.length(); // n
+    int pattern_length = pattern_strings[0].length(); // m (all patterns have same length)
+    int bit_length = 8; // L: To represent to 8 bit of each char
+    size_t poly_modulus_degree;
+    int num_tracks = text_length - pattern_length + 1; // H
+    int num_patterns = pattern_strings.size(); // K
+    int match_threshold = (args.threshold > 0) ? args.threshold : pattern_length;
+    if (match_threshold > pattern_length) {
+        cerr << "Error: threshold must be less than or equal to pattern length (" 
+             << pattern_length << ")\n";
+        return 1;
+    }
+    bool use_exact_product = (match_threshold == pattern_length);
+    bool has_wildcard = any_of(pattern_strings.begin(), pattern_strings.end(), [](const string& pattern) {
+        return pattern.find('*') != string::npos;
+    });
+    string matching_case = has_wildcard ? "wildcard" : (use_exact_product ? "exact" : "approximate");
+    try {
+        poly_modulus_degree = choose_poly_modulus_degree(text_length, pattern_length, bit_length, num_patterns);
+    } catch (const std::exception& e) {
+        cerr << "Error: " << e.what() << "\n";
+        return 1;
+    }
+    int num_copies = poly_modulus_degree / (bit_length * text_length * pattern_length); // d
+    if (num_copies <= 0) {
+        cerr << "Error: text length and pattern length do not fit in the selected BFV slot count\n";
+        return 1;
+    }
+    size_t num_pattern_batches = (static_cast<size_t>(num_patterns) + static_cast<size_t>(num_copies) - 1)
+        / static_cast<size_t>(num_copies);
+    std::vector<int> coeff_modulus_bits;
+    try {
+        coeff_modulus_bits = coeff_modulus_bits_for_case(
+            matching_case,
+            poly_modulus_degree,
+            num_pattern_batches,
+            text_length
+        );
+    } catch (const std::exception& e) {
+        cerr << "Error: " << e.what() << "\n";
+        return 1;
+    }
     
     // ==========================================
     // SET UP ENCRYPTION PARAMETERS
     // ==========================================
+    StepStats setup_stats;
+    step_start_time = Clock::now();
+
     cout << "Generating Encyption Parameters...\n";
     EncryptionParameters parms(scheme_type::bfv);
-    size_t poly_modulus_degree = 32768;
     parms.set_poly_modulus_degree(poly_modulus_degree);
-    parms.set_coeff_modulus(CoeffModulus::BFVDefault(poly_modulus_degree));
+    parms.set_coeff_modulus(CoeffModulus::Create(poly_modulus_degree, coeff_modulus_bits));
     parms.set_plain_modulus(PlainModulus::Batching(poly_modulus_degree, 20));
 
-    SEALContext context(parms);
+    int secure_max_bits = CoeffModulus::MaxBitCount(poly_modulus_degree);
+    int coeff_modulus_total_bits = total_coeff_modulus_bits(coeff_modulus_bits);
+    sec_level_type security_level = (secure_max_bits > 0 && coeff_modulus_total_bits <= secure_max_bits)
+        ? sec_level_type::tc128
+        : sec_level_type::none;
+    SEALContext context(parms, true, security_level);
     Evaluator evaluator(context);
 
     KeyGenerator keygen(context);
@@ -74,24 +306,27 @@ int main(int argc, char* argv[]) {
 
     Decryptor decryptor(context, secret_key);
     cout << "Generated Encyption Parameters!\n";
-    // ==========================================
-    // Variable Definitions
-    // ==========================================
-    int text_length = text.length(); // n
-    int pattern_length = pattern_strings[0].length(); // m (all patterns have same length)
-    int bit_length = 8; // L: To represent to 8 bit of each char
-    int num_tracks = text_length - pattern_length + 1; // H
-    int num_copies = poly_modulus_degree / (bit_length * text_length * pattern_length); // d
-    int num_patterns = pattern_strings.size(); // K
-    bool verbose = true;
+
+    setup_stats.elapsed_ms = elapsed_ms_since(step_start_time);
+    print_step_stats("Encryption Setup", setup_stats);
+
+    bool verbose = args.verbose;
+
+    cout << "=== Run Configuration ===" << endl;
+    cout << left << setw(19) << "Text Length (n)"   << ": " << text_length << endl;
+    cout << left << setw(19) << "Pattern Length (m)"<< ": " << pattern_length << endl;
+    cout << left << setw(19) << "Num Patterns (K)"  << ": " << num_patterns << endl;
+    cout << left << setw(19) << "Bit Length (L)"    << ": " << bit_length << endl;
+    cout << left << setw(19) << "Num Tracks (H)"    << ": " << num_tracks << endl;
+    cout << left << setw(19) << "Match Threshold"   << ": " << match_threshold << endl;
+    cout << left << setw(19) << "Matching Mode"     << ": " << matching_case << endl;
+    cout << left << setw(19) << "Coeff Mod Bits"    << ": " << total_coeff_modulus_bits(coeff_modulus_bits) << endl;
+    cout << left << setw(19) << "Poly Degree"       << ": " << poly_modulus_degree << endl;
+    cout << left << setw(19) << "Pattern Batches"   << ": " << num_pattern_batches << endl;
+    cout << left << setw(19) << "Security Level"    << ": "
+         << (security_level == sec_level_type::tc128 ? "tc128" : "none") << endl;
 
     if (verbose) {
-        cout << "=== Variables ===" << endl;
-        cout << left << setw(19) << "Text Length (n)"   << ": " << text_length << endl;
-        cout << left << setw(19) << "Pattern Length (m)"<< ": " << pattern_length << endl;
-        cout << left << setw(19) << "Num Patterns (K)"  << ": " << num_patterns << endl;
-        cout << left << setw(19) << "Bit Length (L)"    << ": " << bit_length << endl;
-        cout << left << setw(19) << "Num Tracks (H)"    << ": " << num_tracks << endl;
         cout << "\nPatterns to search:\n";
         for (size_t i = 0; i < pattern_strings.size(); ++i) {
             cout << "  " << (i + 1) << ". \"" << pattern_strings[i] << "\"\n";
@@ -102,6 +337,10 @@ int main(int argc, char* argv[]) {
     // ==========================================
     // Text Packing
     // ==========================================
+    StepStats text_preprocessing_stats;
+    StepStats text_encode_encrypt_stats;
+    step_start_time = Clock::now();
+
     vector<uint64_t> text_in_bits = convert_text_to_bits(text, bit_length);
 
     // Double Checking if texts match
@@ -127,182 +366,242 @@ int main(int argc, char* argv[]) {
     Plaintext plaintext;
     Ciphertext ciphertext;
 
+    text_preprocessing_stats.elapsed_ms = elapsed_ms_since(step_start_time);
+
+    step_start_time = Clock::now();
     batch_encoder.encode(full_plaintext, plaintext);
     encryptor.encrypt(plaintext, ciphertext);
 
-    // ==========================================
-    // 1. Mask + Bit Equality
-    // ==========================================
+    text_encode_encrypt_stats.elapsed_ms = elapsed_ms_since(step_start_time);
+    text_encode_encrypt_stats.noise_budget_bits = decryptor.invariant_noise_budget(ciphertext);
+    std::size_t encrypted_text_bytes = ciphertext.save_size(compr_mode_type::zstd);
+    print_step_stats("Text Preprocessing", text_preprocessing_stats);
+    print_step_stats("Input Encode + Encrypt", text_encode_encrypt_stats);
+    print_memory_cost("Encrypted Text Ciphertext", encrypted_text_bytes);
 
-    // Applying Mask
+    // ==========================================
+    // Pattern Evaluation in Batches
+    // ==========================================
+    StepStats mask_bit_equality_stats;
+    StepStats char_equality_stats;
+    StepStats summation_stats;
+    StepStats threshold_stats;
+    StepStats aggregation_stats;
+    StepStats or_stats;
+    Ciphertext result_ct;
+    std::vector<Ciphertext> batch_result_ciphertexts;
+
     Plaintext encoded_mask;
     vector<uint64_t> mask = create_mask(num_tracks * bit_length, text_length * bit_length, pattern_length, poly_modulus_degree, verbose);
     batch_encoder.encode(mask, encoded_mask);
-    evaluator.multiply_plain_inplace(ciphertext, encoded_mask);
 
-    // Bit Equality - Create patterns for all loaded pattern strings
-    std::vector<std::vector<uint64_t>> all_patterns;
-    for (const std::string& pattern_str : pattern_strings) {
-        all_patterns.push_back(create_base_pattern(pattern_str, bit_length, num_tracks, text_length));
-    }
-    std::vector<uint64_t> packed_patterns = pack_patterns(all_patterns, poly_modulus_degree, verbose);
-    Ciphertext bit_equality_ciphertext = xnor(context, batch_encoder, evaluator, ciphertext, packed_patterns);
+    std::vector<uint64_t> output_mask(poly_modulus_degree, 0);
+    output_mask[0] = 1;
+    Plaintext encoded_output_mask;
+    batch_encoder.encode(output_mask, encoded_output_mask);
 
+    for (size_t batch_start = 0; batch_start < pattern_strings.size(); batch_start += static_cast<size_t>(num_copies)) {
+        size_t batch_end = std::min(pattern_strings.size(), batch_start + static_cast<size_t>(num_copies));
+        size_t batch_pattern_count = batch_end - batch_start;
 
-    // ==========================================
-    // 2. Character Equality
-    // ==========================================
-    
-    // Multiply with rotation by L/2 = 4
-    Ciphertext rotated_L_over_2_ct;
-    evaluator.rotate_rows(bit_equality_ciphertext, bit_length / 2, galois_keys, rotated_L_over_2_ct);
-    evaluator.multiply_inplace(bit_equality_ciphertext, rotated_L_over_2_ct);
-    evaluator.relinearize_inplace(bit_equality_ciphertext, relin_keys);
+        // Step 1: mask + bit equality for this pattern batch.
+        step_start_time = Clock::now();
+        Ciphertext masked_ciphertext = ciphertext;
+        evaluator.multiply_plain_inplace(masked_ciphertext, encoded_mask);
 
-    // Multiply with rotation by L/4 = 2
-    Ciphertext rotated_L_over_4_ct;
-    evaluator.rotate_rows(bit_equality_ciphertext, bit_length / 4, galois_keys, rotated_L_over_4_ct);
-    evaluator.multiply_inplace(bit_equality_ciphertext, rotated_L_over_4_ct);
-    evaluator.relinearize_inplace(bit_equality_ciphertext, relin_keys);
-
-    // Multiply with rotation by L/8 = 1
-    Ciphertext rotated_L_over_8_ct;
-    evaluator.rotate_rows(bit_equality_ciphertext, bit_length / 8, galois_keys, rotated_L_over_8_ct);
-    evaluator.multiply_inplace(bit_equality_ciphertext, rotated_L_over_8_ct);
-    evaluator.relinearize_inplace(bit_equality_ciphertext, relin_keys);
-
-    if (verbose) {
-        Plaintext debug_plain;
-        decryptor.decrypt(bit_equality_ciphertext, debug_plain);
-        std::vector<uint64_t> debug_vec;
-        batch_encoder.decode(debug_plain, debug_vec);
-        cout << "\n=== After Character Equality ===\n";
-        cout << "Track matches (1 = all bits matched for this char): ";
-        for (size_t track = 0; track < num_tracks; track++) {
-            cout << debug_vec[track * bit_length] << " ";
+        std::vector<std::vector<uint64_t>> batch_patterns;
+        std::vector<std::vector<uint64_t>> batch_inverse_patterns;
+        for (size_t pattern_index = batch_start; pattern_index < batch_end; ++pattern_index) {
+            auto pattern_pair = create_base_pattern_pair(
+                pattern_strings[pattern_index],
+                bit_length,
+                num_tracks,
+                text_length
+            );
+            batch_patterns.push_back(std::move(pattern_pair.first));
+            batch_inverse_patterns.push_back(std::move(pattern_pair.second));
         }
-        cout << "\n";
-    }
 
-    // ==========================================
-    // 3. Summation and Threshold Comparison
-    // ==========================================
-    
-    // Rotation + Summation
-    // index = RnL/2, RnL/4, ..., nL
-    // Where R=1, n=text_length, L=bit_length
-    // We need to sum across all m pattern windows for each track
-    // So we rotate from (pattern_length * text_length * bit_length)/2 down to (text_length * bit_length)
-    for (size_t i = (pattern_length * text_length * bit_length) / 2; i >= (text_length * bit_length) ; i = i / 2) {
-        Ciphertext rotated_ct;
-        evaluator.rotate_rows(bit_equality_ciphertext, i, galois_keys, rotated_ct);
-        evaluator.add_inplace(bit_equality_ciphertext, rotated_ct);
-    }
+        std::vector<uint64_t> packed_patterns = pack_patterns(batch_patterns, poly_modulus_degree, verbose && batch_start == 0);
+        std::vector<uint64_t> packed_inverse_patterns = pack_patterns(batch_inverse_patterns, poly_modulus_degree, false);
+        Ciphertext bit_equality_ciphertext = xnor(
+            context,
+            batch_encoder,
+            evaluator,
+            masked_ciphertext,
+            packed_patterns,
+            packed_inverse_patterns
+        );
+        mask_bit_equality_stats.elapsed_ms += elapsed_ms_since(step_start_time);
+        mask_bit_equality_stats.noise_budget_bits = decryptor.invariant_noise_budget(bit_equality_ciphertext);
 
-    
-    if (verbose) {
-        Plaintext debug_plain;
-        decryptor.decrypt(bit_equality_ciphertext, debug_plain);
-        std::vector<uint64_t> debug_vec;
-        batch_encoder.decode(debug_plain, debug_vec);
-        cout << "\n=== After Summation (before threshold) ===\n";
-        cout << "Character match count per track: ";
-        for (size_t track = 0; track < num_tracks; track++) {
-            cout << debug_vec[track * bit_length] << " ";
+        // Step 2: character equality.
+        step_start_time = Clock::now();
+        Ciphertext rotated_L_over_2_ct;
+        evaluator.rotate_rows(bit_equality_ciphertext, bit_length / 2, galois_keys, rotated_L_over_2_ct);
+        char_equality_stats.rot_count++;
+        evaluator.multiply_inplace(bit_equality_ciphertext, rotated_L_over_2_ct);
+        evaluator.relinearize_inplace(bit_equality_ciphertext, relin_keys);
+
+        Ciphertext rotated_L_over_4_ct;
+        evaluator.rotate_rows(bit_equality_ciphertext, bit_length / 4, galois_keys, rotated_L_over_4_ct);
+        char_equality_stats.rot_count++;
+        evaluator.multiply_inplace(bit_equality_ciphertext, rotated_L_over_4_ct);
+        evaluator.relinearize_inplace(bit_equality_ciphertext, relin_keys);
+
+        Ciphertext rotated_L_over_8_ct;
+        evaluator.rotate_rows(bit_equality_ciphertext, bit_length / 8, galois_keys, rotated_L_over_8_ct);
+        char_equality_stats.rot_count++;
+        evaluator.multiply_inplace(bit_equality_ciphertext, rotated_L_over_8_ct);
+        evaluator.relinearize_inplace(bit_equality_ciphertext, relin_keys);
+        char_equality_stats.elapsed_ms += elapsed_ms_since(step_start_time);
+        char_equality_stats.noise_budget_bits = decryptor.invariant_noise_budget(bit_equality_ciphertext);
+
+        // Step 3: exact/wildcard product or approximate threshold.
+        Ciphertext threshold_result;
+        if (use_exact_product) {
+            step_start_time = Clock::now();
+            threshold_result = bit_equality_ciphertext;
+
+            for (size_t i = (pattern_length * text_length * bit_length) / 2; i >= (text_length * bit_length); i = i / 2) {
+                Ciphertext rotated_ct;
+                rotate_slots(threshold_result, i, poly_modulus_degree, evaluator, galois_keys, rotated_ct);
+                summation_stats.rot_count++;
+                evaluator.multiply_inplace(threshold_result, rotated_ct);
+                evaluator.relinearize_inplace(threshold_result, relin_keys);
+            }
+
+            summation_stats.elapsed_ms += elapsed_ms_since(step_start_time);
+            summation_stats.noise_budget_bits = decryptor.invariant_noise_budget(threshold_result);
+        } else {
+            step_start_time = Clock::now();
+            for (size_t i = (pattern_length * text_length * bit_length) / 2; i >= (text_length * bit_length); i = i / 2) {
+                Ciphertext rotated_ct;
+                rotate_slots(bit_equality_ciphertext, i, poly_modulus_degree, evaluator, galois_keys, rotated_ct);
+                summation_stats.rot_count++;
+                evaluator.add_inplace(bit_equality_ciphertext, rotated_ct);
+            }
+            summation_stats.elapsed_ms += elapsed_ms_since(step_start_time);
+            summation_stats.noise_budget_bits = decryptor.invariant_noise_budget(bit_equality_ciphertext);
+
+            step_start_time = Clock::now();
+            uint64_t plain_modulus = parms.plain_modulus().value();
+            int threshold_domain = pattern_length;
+            threshold_result = compute_homomorphic_threshold_paterson_stockmeyer(
+                bit_equality_ciphertext,
+                match_threshold,
+                threshold_domain,
+                plain_modulus,
+                evaluator,
+                batch_encoder,
+                relin_keys
+            );
+            threshold_stats.elapsed_ms += elapsed_ms_since(step_start_time);
+            threshold_stats.noise_budget_bits = decryptor.invariant_noise_budget(threshold_result);
         }
-        cout << "\n";
-    }
-    
-    // Thresholding
-    // Get plaintext modulus for threshold function
-    uint64_t plain_modulus = parms.plain_modulus().value();
-    
-    // Apply threshold function: GE(x, t) where t = pattern_length
-    // This outputs 1 if x >= pattern_length (full match), 0 otherwise
-    // IMPORTANT: domain m must be > threshold t for proper polynomial interpolation
-    Ciphertext threshold_result = compute_homomorphic_threshold(
-        bit_equality_ciphertext,
-        pattern_length,          // threshold t = 8
-        2 * pattern_length,      // domain m = 16 (must be > t)
-        plain_modulus,           // field size q
-        evaluator,
-        batch_encoder,
-        relin_keys
-    );
 
-    if (verbose) {
-        Plaintext debug_plain;
-        decryptor.decrypt(threshold_result, debug_plain);
-        std::vector<uint64_t> debug_vec;
-        batch_encoder.decode(debug_plain, debug_vec);
-        cout << "\n=== After Threshold ===\n";
-        cout << "Pattern match per track (1 = full match): ";
-        for (size_t track = 0; track < num_tracks; track++) {
-            cout << debug_vec[track * bit_length] << " ";
+        // Step 4: aggregate patterns within this batch.
+        step_start_time = Clock::now();
+        if (batch_pattern_count > 1) {
+            for (size_t i = (num_copies * pattern_length * text_length * bit_length) / 4;
+                 i >= (pattern_length * text_length * bit_length); i = i / 2) {
+                Ciphertext rotated_ct;
+                rotate_slots(threshold_result, i, poly_modulus_degree, evaluator, galois_keys, rotated_ct);
+                aggregation_stats.rot_count++;
+                evaluator.add_inplace(threshold_result, rotated_ct);
+            }
+            Ciphertext rotated_ct2;
+            evaluator.rotate_columns(threshold_result, galois_keys, rotated_ct2);
+            aggregation_stats.rot_count++;
+            evaluator.add_inplace(threshold_result, rotated_ct2);
         }
-        cout << "\n";
-    }
+        aggregation_stats.elapsed_ms += elapsed_ms_since(step_start_time);
+        aggregation_stats.noise_budget_bits = decryptor.invariant_noise_budget(threshold_result);
 
-    // ==========================================
-    // 4. Aggregation Across Patterns
-    // ==========================================
-    // Aggregate threshold results across all K patterns using rotation
-    // Each pattern's results are stored in different copies (d copies total)
-    // Rotation indices: (d*m*n*L)/2, (d*m*n*L)/4, ..., down to m*n*L
-    // This sums all K pattern results using binary tree aggregation
-    // Only execute when K > 1 (multiple patterns to aggregate)
-    
-    if (num_patterns > 1) {
-        for (size_t i = (num_copies * pattern_length * text_length * bit_length) / 4; 
-             i >= (pattern_length * text_length * bit_length); i = i / 2) {
+        // Step 5: OR over tracks for this batch.
+        step_start_time = Clock::now();
+        Ciphertext minus_ct = one_minus_ct(context, batch_encoder, evaluator, threshold_result, poly_modulus_degree);
+
+        for (size_t i = (text_length * bit_length) / 2; i >= bit_length ; i = i / 2) {
             Ciphertext rotated_ct;
-            evaluator.rotate_rows(threshold_result, i, galois_keys, rotated_ct);
-            evaluator.add_inplace(threshold_result, rotated_ct);
+            rotate_slots(minus_ct, i, poly_modulus_degree, evaluator, galois_keys, rotated_ct);
+            or_stats.rot_count++;
+            evaluator.multiply_inplace(minus_ct, rotated_ct);
+            evaluator.relinearize_inplace(minus_ct, relin_keys);
         }
-    }
-    
-    if (verbose) {
-        Plaintext debug_plain;
-        decryptor.decrypt(threshold_result, debug_plain);
-        std::vector<uint64_t> debug_vec;
-        batch_encoder.decode(debug_plain, debug_vec);
-        cout << "\n=== After Pattern Aggregation (Step 4) ===\n";
-        cout << "Aggregated matches per track (any pattern): ";
-        for (size_t track = 0; track < num_tracks; track++) {
-            cout << debug_vec[track * bit_length] << " ";
-        }
-        cout << "\n";
+
+        Ciphertext batch_result_ct = one_minus_ct(context, batch_encoder, evaluator, minus_ct, poly_modulus_degree);
+        evaluator.multiply_plain_inplace(batch_result_ct, encoded_output_mask);
+        or_stats.noise_budget_bits = decryptor.invariant_noise_budget(batch_result_ct);
+        batch_result_ciphertexts.push_back(std::move(batch_result_ct));
+
+        or_stats.elapsed_ms += elapsed_ms_since(step_start_time);
     }
 
-    // ==========================================
-    // 5. OR Evaluation Over Tracks
-    // ==========================================
-
-    Ciphertext minus_ct = one_minus_ct(context, batch_encoder, evaluator, threshold_result, poly_modulus_degree);
-
-     for (size_t i = (text_length * bit_length) / 2; i >= bit_length ; i = i / 2) {
-        Ciphertext rotated_ct;
-        evaluator.rotate_rows(minus_ct, i, galois_keys, rotated_ct);
-        evaluator.multiply_inplace(minus_ct, rotated_ct);
-        evaluator.relinearize_inplace(minus_ct, relin_keys);
+    step_start_time = Clock::now();
+    if (batch_result_ciphertexts.empty()) {
+        throw std::runtime_error("No pattern batches were evaluated.");
     }
-    
-    Ciphertext result_ct = one_minus_ct(context, batch_encoder, evaluator, minus_ct, poly_modulus_degree);
 
+    result_ct = std::move(batch_result_ciphertexts.front());
+    for (size_t i = 1; i < batch_result_ciphertexts.size(); ++i) {
+        evaluator.add_inplace(result_ct, batch_result_ciphertexts[i]);
+    }
+    evaluator.multiply_plain_inplace(result_ct, encoded_output_mask);
+    or_stats.elapsed_ms += elapsed_ms_since(step_start_time);
+    or_stats.noise_budget_bits = decryptor.invariant_noise_budget(result_ct);
+
+    print_step_stats("Step 1 Mask + Bit Equality", mask_bit_equality_stats);
+    print_step_stats("Step 2 Character Equality", char_equality_stats);
+    if (use_exact_product) {
+        print_step_stats("Step 3 Exact/Wildcard Product", summation_stats);
+    } else {
+        print_step_stats("Step 3a Summation", summation_stats);
+        print_step_stats("Step 3b Threshold", threshold_stats);
+    }
+    print_step_stats("Step 4 Pattern Aggregation", aggregation_stats);
+    print_step_stats("Step 5 OR Evaluation", or_stats);
+
+    StepStats final_decrypt_stats;
+    step_start_time = Clock::now();
     Plaintext decrypted_result;
     decryptor.decrypt(result_ct, decrypted_result);
 
     std::vector<uint64_t> result_vector;
     batch_encoder.decode(decrypted_result, result_vector);
+    final_decrypt_stats.elapsed_ms = elapsed_ms_since(step_start_time);
+    print_step_stats("Final Decrypt + Decode", final_decrypt_stats);
 
-    if (verbose) {
-        cout << "\n=== Final Result ===\n";
-        if (result_vector[0] == 1) {
-            cout << "Pattern FOUND: result_vector[0] = " << result_vector[0] << "\n";
-        } else {
-            cout << "Pattern NOT FOUND: result_vector[0] = " << result_vector[0] << "\n";
-        }
+    cout << "\n=== Final Result ===\n";
+    if (result_vector[0] == 1) {
+        cout << "Pattern FOUND: result_vector[0] = " << result_vector[0] << "\n";
+    } else {
+        cout << "Pattern NOT FOUND: result_vector[0] = " << result_vector[0] << "\n";
     }
+
+    double total_step_time_ms = text_encode_encrypt_stats.elapsed_ms
+        + mask_bit_equality_stats.elapsed_ms
+        + char_equality_stats.elapsed_ms
+        + summation_stats.elapsed_ms
+        + threshold_stats.elapsed_ms
+        + aggregation_stats.elapsed_ms
+        + or_stats.elapsed_ms
+        + final_decrypt_stats.elapsed_ms;
+
+    print_time_cost_summary(
+        matching_case,
+        text_encode_encrypt_stats,
+        mask_bit_equality_stats,
+        char_equality_stats,
+        summation_stats,
+        threshold_stats,
+        aggregation_stats,
+        or_stats,
+        final_decrypt_stats
+    );
+
+    cout << "\n=== Total Step Runtime Metrics ===\n";
+    cout << "time_ms:   " << fixed << setprecision(3) << total_step_time_ms << "\n";
 
     return 0;
 }

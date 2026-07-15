@@ -90,6 +90,8 @@ std::vector<std::string> read_patterns_from_file(const std::string& filepath) {
 struct ProgramArgs {
     std::string text_file;
     std::string patterns_file;
+    int threshold = -1;
+    bool verbose = true;
 };
 
 /**
@@ -97,12 +99,15 @@ struct ProgramArgs {
  * @param program_name Name of the executable
  */
 void print_usage(const char* program_name) {
-    std::cout << "Usage: " << program_name << " --text <text_file> --pattern <patterns_file>\n\n"
+    std::cout << "Usage: " << program_name << " --text <text_file> --pattern <patterns_file> [--threshold <t>] [--quiet]\n\n"
               << "Arguments:\n"
               << "  --text <file>      Path to file containing the text to search in\n"
-              << "  --pattern <file>   Path to file containing patterns (one per line)\n\n"
+              << "  --pattern <file>   Path to file containing patterns (one per line)\n"
+              << "  --threshold <t>    Optional approximate matching threshold; defaults to pattern length\n"
+              << "  --quiet            Suppress debug vectors and packing detail\n\n"
               << "Example:\n"
               << "  " << program_name << " --text text.txt --pattern patterns.txt\n"
+              << "  " << program_name << " --text text.txt --pattern patterns.txt --threshold 7\n"
               << std::endl;
 }
 
@@ -116,13 +121,14 @@ void print_usage(const char* program_name) {
 ProgramArgs parse_arguments(int argc, char* argv[]) {
     ProgramArgs args;
     
-    if (argc != 5) {
-        throw std::runtime_error("Invalid number of arguments");
-    }
-    
-    // Parse flags and their values
-    for (int i = 1; i < argc; i += 2) {
+    for (int i = 1; i < argc;) {
         std::string flag = argv[i];
+
+        if (flag == "--quiet") {
+            args.verbose = false;
+            ++i;
+            continue;
+        }
         
         if (i + 1 >= argc) {
             throw std::runtime_error("Missing value for flag: " + flag);
@@ -134,9 +140,17 @@ ProgramArgs parse_arguments(int argc, char* argv[]) {
             args.text_file = value;
         } else if (flag == "--pattern") {
             args.patterns_file = value;
+        } else if (flag == "--threshold") {
+            try {
+                args.threshold = std::stoi(value);
+            } catch (const std::exception&) {
+                throw std::runtime_error("Invalid threshold value: " + value);
+            }
         } else {
             throw std::runtime_error("Unknown flag: " + flag);
         }
+
+        i += 2;
     }
     
     // Validate that both required flags were provided
@@ -145,6 +159,9 @@ ProgramArgs parse_arguments(int argc, char* argv[]) {
     }
     if (args.patterns_file.empty()) {
         throw std::runtime_error("Missing required flag: --pattern");
+    }
+    if (args.threshold == 0 || args.threshold < -1) {
+        throw std::runtime_error("Threshold must be a positive integer");
     }
     
     return args;
