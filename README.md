@@ -1,4 +1,4 @@
-# Bit Encoding Approximate Pattern Matching in BFV
+# LEAP: Lean and Efficient Homomorphic Multi-Pattern Matching
 
 A homomorphic encryption-based pattern matching system using Microsoft SEAL's BFV scheme. This implementation supports **exact matching**, **wildcard matching**, and **approximate matching** with configurable thresholds, all performed on encrypted data.
 
