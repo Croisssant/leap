@@ -379,6 +379,21 @@ int main(int argc, char* argv[]) {
     print_step_stats("Input Encode + Encrypt", text_encode_encrypt_stats);
     print_memory_cost("Encrypted Text Ciphertext", encrypted_text_bytes);
 
+    // Export encrypted text ciphertext if requested
+    if (args.export_ciphertext) {
+        std::string ct_path = args.output_dir + "/encrypted_text.bin";
+        std::ofstream ct_file(ct_path, std::ios::binary);
+        if (ct_file.is_open()) {
+            ciphertext.save(ct_file, compr_mode_type::zstd);
+            ct_file.close();
+            cout << "CIPHERTEXT_EXPORTED: " << ct_path << "\n";
+            cout << "CIPHERTEXT_SIZE_BYTES: " << encrypted_text_bytes << "\n";
+            cout << "CIPHERTEXT_NOISE_BUDGET: " << text_encode_encrypt_stats.noise_budget_bits << "\n";
+        } else {
+            cerr << "Warning: Failed to save ciphertext to " << ct_path << "\n";
+        }
+    }
+
     // ==========================================
     // Pattern Evaluation in Batches
     // ==========================================
@@ -424,6 +439,25 @@ int main(int argc, char* argv[]) {
 
         std::vector<uint64_t> packed_patterns = pack_patterns(batch_patterns, poly_modulus_degree, verbose && batch_start == 0);
         std::vector<uint64_t> packed_inverse_patterns = pack_patterns(batch_inverse_patterns, poly_modulus_degree, false);
+        
+        // Export encoded pattern plaintexts if requested
+        if (args.export_ciphertext && batch_start == 0) {
+            // Encode the entire batch as one plaintext
+            Plaintext pattern_plaintext;
+            batch_encoder.encode(packed_patterns, pattern_plaintext);
+            
+            // Save to one file for the batch
+            std::string pattern_pt_path = args.output_dir + "/encoded_patterns_batch.bin";
+            std::ofstream pattern_pt_file(pattern_pt_path, std::ios::binary);
+            if (pattern_pt_file.is_open()) {
+                std::size_t pattern_pt_size = pattern_plaintext.save(pattern_pt_file);
+                pattern_pt_file.close();
+                cout << "PATTERN_PLAINTEXT_EXPORTED: " << pattern_pt_path << "\n";
+                cout << "PATTERN_PLAINTEXT_SIZE_BYTES: " << pattern_pt_size << "\n";
+                cout << "PATTERN_BATCH_COUNT: " << batch_pattern_count << "\n";
+            }
+        }
+        
         Ciphertext bit_equality_ciphertext = xnor(
             context,
             batch_encoder,
