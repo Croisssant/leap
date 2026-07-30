@@ -30,3 +30,6 @@
 .vs/
 .idea/
 *.user
+
+# Python venv
+.venv/
