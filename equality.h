@@ -16,7 +16,7 @@ std::vector<uint64_t> create_mask_segment(size_t num_ones, size_t mask_segment_s
     std::vector<uint64_t> mask_segment(mask_segment_size, 1);
     
     // Fill the remaining vector with 0s
-    if (num_ones) {
+    if (num_ones < mask_segment_size) {
         std::fill(mask_segment.begin() + num_ones, mask_segment.end(), 0);
     }
     
