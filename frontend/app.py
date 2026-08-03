@@ -4,6 +4,8 @@ import os
 import tempfile
 import re
 
+from streamlit_extras.let_it_rain import rain
+
 # Helper function to find project root
 def find_project_root():
     """Find the project root by looking for CMakeLists.txt"""
@@ -26,7 +28,7 @@ EXECUTABLE_PATH = os.path.join(PROJECT_ROOT, 'build', 'pattern_matching')
 # 1. Page Configuration
 st.set_page_config(
     page_title="LEAP",
-    layout="centered"
+    layout="wide"
 )
 
 st.title("Lean and Efficient Homomorphic Multi-Pattern Matching")
@@ -52,22 +54,28 @@ st.sidebar.markdown("- All patterns must have same length")
 st.sidebar.markdown("- Use `*` for wildcard matching")
 st.sidebar.markdown("- Example: `viv*mus.`")
 
-# 3. Text Input Fields in Main Layout
-st.subheader("📝 Input Text")
-text_input = st.text_area(
-    "Enter the text to search in:",
-    value="Lorem ipsum dolor sit amet, consectetur adipiscing elit vivamus.",
-    height=100,
-    help="Enter the source text where patterns will be searched"
-)
+# 3. Text Input Fields in Main Layout - Two Column Layout
+col1, col2 = st.columns([1, 1])
 
-st.subheader("🔍 Search Patterns")
-pattern_input = st.text_area(
-    "Enter patterns to search for (one per line):",
-    value="vivamus.\nvivaaus.",
-    height=120,
-    help="Enter one or more patterns. All patterns must have the same length."
-)
+with col1:
+    st.subheader("📝 Text Owner (Party 1)")
+    text_input = st.text_area(
+        "Enter the text to search in:",
+        value="Lorem ipsum dolor sit amet, consectetur adipiscing elit vivamus.",
+        width=800,
+        height=200,
+        help="Enter the source text where patterns will be searched"
+    )
+
+with col2:
+    st.subheader("🔍 Pattern Owner (Party 2)")
+    pattern_input = st.text_area(
+        "Enter patterns to search for (one per line):",
+        value="vivamus.\nvivaaus.",
+        width=800,
+        height=200,
+        help="Enter one or more patterns. All patterns must have the same length."
+    )
 
 # 4. Execution Logic
 if st.button("🚀 Run Pattern Matching", type="primary", use_container_width=True):
@@ -98,9 +106,9 @@ if st.button("🚀 Run Pattern Matching", type="primary", use_container_width=Tr
                 else:
                     # Show effective threshold info
                     if threshold <= 0 or threshold == pattern_length:
-                        st.info(f"ℹ️ Using exact matching mode (threshold = {pattern_length})")
+                        st.toast(f"exact matching mode (threshold: {pattern_length})", icon='ℹ️')
                     else:
-                        st.info(f"ℹ️ Using approximate matching mode (threshold = {threshold})")
+                        st.toast(f"approximate matching mode (threshold: {threshold})", icon='ℹ️')
                     
                     with st.spinner("🔐 Executing secure pattern matching on encrypted data..."):
                         # Create a temporary directory to safely store input files for the binary to read
@@ -180,103 +188,109 @@ if st.button("🚀 Run Pattern Matching", type="primary", use_container_width=Tr
                                     elif "PATTERN_BATCH_COUNT:" in line:
                                         pattern_batch_count = int(line.split("PATTERN_BATCH_COUNT:")[1].strip())
                                 
-                                # Display Results
-                                st.markdown("---")
-                                st.subheader("📊 Pattern Matching Results")
-                                
-                                # Display match result with visual feedback
                                 if match_found:
-                                    st.success(f"✅ **MATCH FOUND!** (result = {result_value})")
-                                    st.balloons()
+                                    st.toast(f"MATCH FOUND", icon='✅')
+                               
                                 else:
-                                    st.error(f"❌ **NO MATCH FOUND** (result = {result_value})")
+                                    st.toast(f"NO MATCH FOUND", icon='❌')
                                 
-                                # Display search details
-                                col1, col2, col3 = st.columns(3)
-                                with col1:
-                                    st.metric("Text Length", len(text_input))
-                                with col2:
-                                    st.metric("Pattern Length", len(patterns[0]))
-                                with col3:
-                                    st.metric("Patterns Searched", len(patterns))
-                                
-                                # Display matching mode and threshold
-                                col1, col2 = st.columns(2)
-                                with col1:
-                                    st.info(f"🔧 **Matching Mode:** {matching_mode.capitalize()}")
-                                with col2:
-                                    st.info(f"🎯 **Threshold:** {threshold}")
-                                
-                                # Show patterns searched
-                                with st.expander("🔍 View Patterns Searched", expanded=False):
-                                    for i, pattern in enumerate(patterns, 1):
-                                        st.code(f"{i}. {pattern}", language="text")
-                                
-                                # Show ciphertext information if exported
+                                # Show ciphertext information if exported - Two Column Layout
                                 if (ciphertext_path or pattern_plaintext_path):
                                     st.markdown("---")
-                                    st.subheader("🔐 Encrypted Ciphertext Information")
+                                    st.subheader("🔐 Encrypted Data Information")
                                     
-                                    # Display encrypted text ciphertext
-                                    if ciphertext_path:
-                                        st.markdown("### 📄 Encrypted Text Ciphertext")
-                                        
-                                        # Display ciphertext metadata
-                                        col1, col2, col3 = st.columns(3)
-                                        with col1:
-                                            if ciphertext_size:
-                                                size_kb = ciphertext_size / 1024
-                                                st.metric("Size", f"{size_kb:.2f} KB")
-                                        with col2:
-                                            if ciphertext_noise_budget is not None:
-                                                st.metric("Noise Budget", f"{ciphertext_noise_budget} bits")
-                                        with col3:
-                                            st.metric("Compression", "ZSTD")
-                                        
-                                        # Read and display ciphertext
-                                        if os.path.exists(ciphertext_path):
-                                            with open(ciphertext_path, "rb") as f:
-                                                ciphertext_data = f.read()
-                                            
-                                            # Display hex preview in expandable section
-                                            with st.expander("🔍 View Encrypted Text Ciphertext", expanded=False):
+                                    # Create two columns for Text Owner and Pattern Owner results
+                                    result_col1, result_col2 = st.columns(2)
+                                    
+                                    # Left Column: Text Owner - Encrypted Text Ciphertext
+                                    with result_col1:
+                                        if ciphertext_path:
+                                            st.markdown("### Encrypted Ciphertext")
+                                            # Read and display ciphertext
+                                            if os.path.exists(ciphertext_path):
+                                                with open(ciphertext_path, "rb") as f:
+                                                    ciphertext_data = f.read()
+                                                
+                                                # Display hex preview in expandable section
+                                             
                                                 hex_preview = ciphertext_data[:512].hex()
                                                 # Format hex in lines of 64 characters (32 bytes per line)
                                                 formatted_hex = '\n'.join([hex_preview[i:i+64] for i in range(0, len(hex_preview), 64)])
                                                 st.code(formatted_hex + "\n..." if len(ciphertext_data) > 512 else formatted_hex, language="text")
                                                 st.caption(f"Showing first {min(512, len(ciphertext_data))} bytes of {len(ciphertext_data)} total bytes")
-                                    
-                                    # Display pattern batch plaintext
-                                    if pattern_plaintext_path:
-                                        st.markdown("### 📝 Encoded Patterns Batch Plaintext")
-                                        
-                                        # Display pattern plaintext metadata
-                                        col1, col2, col3 = st.columns(3)
-                                        with col1:
-                                            if pattern_plaintext_size:
-                                                size_kb = pattern_plaintext_size / 1024
-                                                st.metric("Size", f"{size_kb:.2f} KB")
-                                        with col2:
-                                            st.metric("Type", "Encoded")
-                                        with col3:
-                                            if pattern_batch_count:
-                                                st.metric("Patterns in Batch", pattern_batch_count)
-                                        
-                                        # Read and display pattern plaintext
-                                        if os.path.exists(pattern_plaintext_path):
-                                            with open(pattern_plaintext_path, "rb") as f:
-                                                pattern_pt_data = f.read()
                                             
-                                            # Display hex preview in expandable section
-                                            with st.expander("🔍 View Encoded Patterns Batch", expanded=False):
+                                            # Display ciphertext metadata
+                                            if ciphertext_size:
+                                                size_kb = ciphertext_size / 1024
+                                                st.metric("Size", f"{size_kb:.2f} KB")
+                                            if ciphertext_noise_budget is not None:
+                                                st.metric("Noise Budget", f"{ciphertext_noise_budget} bits")
+                                            st.metric("Compression", "ZSTD")
+                                    
+                                    # Right Column: Pattern Owner - Encoded Patterns Batch Plaintext
+                                    with result_col2:
+                                        if pattern_plaintext_path:
+                                            st.markdown("### Encoded Plaintext")
+
+                                              # Read and display pattern plaintext
+                                            if os.path.exists(pattern_plaintext_path):
+                                                with open(pattern_plaintext_path, "rb") as f:
+                                                    pattern_pt_data = f.read()
+                                                
+                                                # Display hex preview in expandable section
+                                          
                                                 hex_preview = pattern_pt_data[:512].hex()
                                                 # Format hex in lines of 64 characters (32 bytes per line)
                                                 formatted_hex = '\n'.join([hex_preview[i:i+64] for i in range(0, len(hex_preview), 64)])
                                                 st.code(formatted_hex + "\n..." if len(pattern_pt_data) > 512 else formatted_hex, language="text")
                                                 st.caption(f"Showing first {min(512, len(pattern_pt_data))} bytes of {len(pattern_pt_data)} total bytes")
+                                            
+                                            # Display pattern plaintext metadata
+                                            if pattern_plaintext_size:
+                                                size_kb = pattern_plaintext_size / 1024
+                                                st.metric("Size", f"{size_kb:.2f} KB")
+                                            st.metric("Type", "Encoded")
+                                            if pattern_batch_count:
+                                                st.metric("Patterns in Batch", pattern_batch_count)
+                                            
                                     
                                     st.info("💡 **Note:** The text is encrypted (ciphertext), while patterns are encoded as plaintexts for homomorphic operations.")
-                                
+
+
+                                  # Display Results
+                                    st.markdown("---")
+                                    st.subheader("📊 Pattern Matching Results")
+                                    
+                                    # Display match result with visual feedback
+                                    if match_found:
+                                        st.success(f"✅ **MATCH FOUND!** (result = {result_value})")
+                                        st.balloons()
+                                    else:
+                                        st.error(f"❌ **NO MATCH FOUND** (result = {result_value})")
+                                        rain(emoji="❌", font_size=54, animation_length=1)
+                                    
+                                    # Display search details
+                                    col1, col2, col3 = st.columns(3)
+                                    with col1:
+                                        st.metric("Text Length", len(text_input))
+                                    with col2:
+                                        st.metric("Pattern Length", len(patterns[0]))
+                                    with col3:
+                                        st.metric("Patterns Searched", len(patterns))
+                                    
+                                    # Display matching mode and threshold
+                                    col1, col2 = st.columns(2)
+                                    with col1:
+                                        st.info(f"🔧 **Matching Mode:** {matching_mode.capitalize()}")
+                                    with col2:
+                                        st.info(f"🎯 **Threshold:** {threshold}")
+                                    
+                                    # Show patterns searched
+                                    with st.expander("🔍 View Patterns Searched", expanded=False):
+                                        for i, pattern in enumerate(patterns, 1):
+                                            st.code(f"{i}. {pattern}", language="text")
+
+                                                                        
                                 # Show full execution output
                                 with st.expander("📋 View Full Execution Output", expanded=False):
                                     st.code(output, language="text")
