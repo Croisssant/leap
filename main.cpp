@@ -100,33 +100,10 @@ std::vector<int> coeff_modulus_bits_for_case(
     const std::string& matching_case,
     size_t poly_modulus_degree,
     size_t num_batches,
-    int text_length,
-    int pattern_length) {
+    int text_length) {
     int target_bits = (matching_case == "exact" || matching_case == "wildcard") ? 620 : 670;
     int track_levels = static_cast<int>(std::ceil(std::log2(static_cast<double>(text_length))));
     target_bits += std::max(0, track_levels - 6) * 110;
-    
-    // Add extra bits for longer patterns (each multiplication in Step 3 consumes ~30-35 bits)
-    // For non-power-of-2 patterns, we do (pattern_length - 1) multiplications
-    // For power-of-2 patterns, we do log2(pattern_length) multiplications
-    bool is_power_of_2 = (pattern_length & (pattern_length - 1)) == 0;
-    int num_step3_multiplications = is_power_of_2 ? 
-        static_cast<int>(std::log2(pattern_length)) : 
-        (pattern_length - 1);
-    
-    // Add 35 bits per multiplication beyond the base case (pattern_length > 8)
-    if (pattern_length > 8) {
-        int extra_mults = num_step3_multiplications - (is_power_of_2 ? 3 : 7);
-        target_bits += std::max(0, extra_mults) * 35;
-    }
-    
-    // For long patterns, we need extra budget to survive through Step 5
-    // The base 620 bits assumes pattern_length <= 8
-    // For longer patterns, add a safety margin
-    if (pattern_length > 8) {
-        // Add 200 bits safety margin to ensure Step 5 doesn't exhaust the budget
-        target_bits += 200;
-    }
 
     std::vector<int> bit_sizes;
     int remaining = target_bits;
@@ -250,22 +227,75 @@ int main(int argc, char* argv[]) {
     // ==========================================
     // Variable Definitions
     // ==========================================
-    int text_length = text.length(); // n
-    int pattern_length = pattern_strings[0].length(); // m (all patterns have same length)
     int bit_length = 8; // L: To represent to 8 bit of each char
     size_t poly_modulus_degree;
-    int num_tracks = text_length - pattern_length + 1; // H
     int num_patterns = pattern_strings.size(); // K
-    int match_threshold = (args.threshold > 0) ? args.threshold : pattern_length;
-    if (match_threshold > pattern_length) {
-        cerr << "Error: threshold must be less than or equal to pattern length (" 
-             << pattern_length << ")\n";
-        return 1;
-    }
-    bool use_exact_product = (match_threshold == pattern_length);
+
+    // Detect user-supplied wildcards BEFORE we add our own padding wildcards,
+    // so the reported matching mode reflects what the user actually asked for.
     bool has_wildcard = any_of(pattern_strings.begin(), pattern_strings.end(), [](const string& pattern) {
         return pattern.find('*') != string::npos;
     });
+
+    // Real (unpadded) lengths drive match semantics: the valid track count
+    // and the threshold/exactness comparison must be in terms of what the
+    // user actually typed, not the padded buffer size.
+    int real_text_length = text.length();
+    int real_pattern_length = pattern_strings[0].length();
+
+    int match_threshold = (args.threshold > 0) ? args.threshold : real_pattern_length;
+    if (match_threshold > real_pattern_length) {
+        cerr << "Error: threshold must be less than or equal to pattern length ("
+             << real_pattern_length << ")\n";
+        return 1;
+    }
+    bool use_exact_product = (match_threshold == real_pattern_length);
+
+    // ------------------------------------------------------------------
+    // Pad text and patterns up to the next power of two.
+    //
+    // Steps 3, 4, and 5 all fold ciphertext slots together with a
+    // rotate-by-half-and-combine tree (see the rotate_slots calls below).
+    // That reduction only lands on segment-aligned rotations when the
+    // thing being folded (pattern_length in Step 3, num_copies in Step 4,
+    // text_length in Step 5) is a power of two. A pattern_length or
+    // text_length that isn't a power of two silently corrupts the result
+    // instead of erroring — which is why e.g. 8-character patterns worked
+    // but 3-character ones didn't.
+    //
+    // Patterns are padded with '*' (wildcard), which is a no-op for the
+    // AND-product: xnor() against an all-wildcard slot always evaluates to
+    // 1. Text is padded with '\0', a byte that will never appear in real
+    // pattern characters, so it can never falsely match. The existing mask
+    // (built from num_tracks, computed below from REAL lengths) already
+    // zeroes out every track position past the real text/pattern boundary,
+    // so the padded region is automatically excluded from the result.
+    // ------------------------------------------------------------------
+    size_t padded_text_length = next_power_of_two(static_cast<size_t>(real_text_length));
+    size_t padded_pattern_length = next_power_of_two(static_cast<size_t>(real_pattern_length));
+
+    if (padded_text_length > static_cast<size_t>(real_text_length)) {
+        text.append(padded_text_length - real_text_length, '\0');
+    }
+    int wildcard_padding_count = static_cast<int>(padded_pattern_length) - real_pattern_length;
+    if (wildcard_padding_count > 0) {
+        for (auto& p : pattern_strings) {
+            p.append(wildcard_padding_count, '*');
+        }
+    }
+
+    int text_length = text.length();                  // n, now padded to a power of two
+    int pattern_length = pattern_strings[0].length();  // m, now padded to a power of two
+    int num_tracks = real_text_length - real_pattern_length + 1; // H, from REAL lengths only
+
+    // Padding wildcards always contribute an automatic per-character match,
+    // so in approximate mode the threshold needs to account for the
+    // guaranteed extra hits contributed by the padded characters. (No
+    // adjustment needed in exact mode: padding is already product-neutral.)
+    if (!use_exact_product) {
+        match_threshold += wildcard_padding_count;
+    }
+
     string matching_case = has_wildcard ? "wildcard" : (use_exact_product ? "exact" : "approximate");
     try {
         poly_modulus_degree = choose_poly_modulus_degree(text_length, pattern_length, bit_length, num_patterns);
@@ -286,8 +316,7 @@ int main(int argc, char* argv[]) {
             matching_case,
             poly_modulus_degree,
             num_pattern_batches,
-            text_length,
-            pattern_length
+            text_length
         );
     } catch (const std::exception& e) {
         cerr << "Error: " << e.what() << "\n";
@@ -337,8 +366,10 @@ int main(int argc, char* argv[]) {
     bool verbose = args.verbose;
 
     cout << "=== Run Configuration ===" << endl;
-    cout << left << setw(19) << "Text Length (n)"   << ": " << text_length << endl;
-    cout << left << setw(19) << "Pattern Length (m)"<< ": " << pattern_length << endl;
+    cout << left << setw(19) << "Text Length (n)"   << ": " << text_length
+         << (text_length != real_text_length ? "  (padded from " + std::to_string(real_text_length) + ")" : "") << endl;
+    cout << left << setw(19) << "Pattern Length (m)"<< ": " << pattern_length
+         << (pattern_length != real_pattern_length ? "  (padded from " + std::to_string(real_pattern_length) + ")" : "") << endl;
     cout << left << setw(19) << "Num Patterns (K)"  << ": " << num_patterns << endl;
     cout << left << setw(19) << "Bit Length (L)"    << ": " << bit_length << endl;
     cout << left << setw(19) << "Num Tracks (H)"    << ": " << num_tracks << endl;
@@ -431,9 +462,7 @@ int main(int argc, char* argv[]) {
     std::vector<Ciphertext> batch_result_ciphertexts;
 
     Plaintext encoded_mask;
-    
     vector<uint64_t> mask = create_mask(num_tracks * bit_length, text_length * bit_length, pattern_length, poly_modulus_degree, verbose);
-    
     batch_encoder.encode(mask, encoded_mask);
 
     std::vector<uint64_t> output_mask(poly_modulus_degree, 0);
@@ -523,60 +552,23 @@ int main(int argc, char* argv[]) {
             step_start_time = Clock::now();
             threshold_result = bit_equality_ciphertext;
 
-            // Check if pattern_length is a power of 2
-            bool is_power_of_2 = (pattern_length & (pattern_length - 1)) == 0;
-            
-            if (is_power_of_2) {
-                // Use binary tree reduction for power-of-2 lengths (more efficient)
-                size_t total = pattern_length * text_length * bit_length;
-                size_t target = text_length * bit_length;
-                size_t i = total / 2;
-                while (i >= target) {
-                    Ciphertext rotated_ct;
-                    rotate_slots(threshold_result, i, poly_modulus_degree, evaluator, galois_keys, rotated_ct);
-                    summation_stats.rot_count++;
-                    evaluator.multiply_inplace(threshold_result, rotated_ct);
-                    evaluator.relinearize_inplace(threshold_result, relin_keys);
-                    
-                    if (i == target) break;
-                    i = i / 2;
-                    
-                    if (i < target && target < i * 2) {
-                        i = target;
-                    }
-                }
-            } else {
-                // Use sequential multiplication for non-power-of-2 lengths
-                size_t stride = text_length * bit_length;
-                for (int p = 1; p < pattern_length; ++p) {
-                    Ciphertext rotated_ct;
-                    rotate_slots(bit_equality_ciphertext, p * stride, poly_modulus_degree, evaluator, galois_keys, rotated_ct);
-                    summation_stats.rot_count++;
-                    evaluator.multiply_inplace(threshold_result, rotated_ct);
-                    evaluator.relinearize_inplace(threshold_result, relin_keys);
-                }
+            for (size_t i = (pattern_length * text_length * bit_length) / 2; i >= (text_length * bit_length); i = i / 2) {
+                Ciphertext rotated_ct;
+                rotate_slots(threshold_result, i, poly_modulus_degree, evaluator, galois_keys, rotated_ct);
+                summation_stats.rot_count++;
+                evaluator.multiply_inplace(threshold_result, rotated_ct);
+                evaluator.relinearize_inplace(threshold_result, relin_keys);
             }
 
             summation_stats.elapsed_ms += elapsed_ms_since(step_start_time);
             summation_stats.noise_budget_bits = decryptor.invariant_noise_budget(threshold_result);
         } else {
             step_start_time = Clock::now();
-            size_t total = pattern_length * text_length * bit_length;
-            size_t target = text_length * bit_length;
-            size_t i = total / 2;
-            while (i >= target) {
+            for (size_t i = (pattern_length * text_length * bit_length) / 2; i >= (text_length * bit_length); i = i / 2) {
                 Ciphertext rotated_ct;
                 rotate_slots(bit_equality_ciphertext, i, poly_modulus_degree, evaluator, galois_keys, rotated_ct);
                 summation_stats.rot_count++;
                 evaluator.add_inplace(bit_equality_ciphertext, rotated_ct);
-                
-                if (i == target) break;
-                i = i / 2;
-                
-                // If we skipped over target, jump to it
-                if (i < target && target < i * 2) {
-                    i = target;
-                }
             }
             summation_stats.elapsed_ms += elapsed_ms_since(step_start_time);
             summation_stats.noise_budget_bits = decryptor.invariant_noise_budget(bit_equality_ciphertext);
@@ -600,14 +592,17 @@ int main(int argc, char* argv[]) {
         // Step 4: aggregate patterns within this batch.
         step_start_time = Clock::now();
         if (batch_pattern_count > 1) {
-            // Use batch_pattern_count instead of num_copies to aggregate only the actual patterns in this batch
-            for (size_t i = (batch_pattern_count * pattern_length * text_length * bit_length) / 2;
+            for (size_t i = (num_copies * pattern_length * text_length * bit_length) / 4;
                  i >= (pattern_length * text_length * bit_length); i = i / 2) {
                 Ciphertext rotated_ct;
                 rotate_slots(threshold_result, i, poly_modulus_degree, evaluator, galois_keys, rotated_ct);
                 aggregation_stats.rot_count++;
                 evaluator.add_inplace(threshold_result, rotated_ct);
             }
+            Ciphertext rotated_ct2;
+            evaluator.rotate_columns(threshold_result, galois_keys, rotated_ct2);
+            aggregation_stats.rot_count++;
+            evaluator.add_inplace(threshold_result, rotated_ct2);
         }
         aggregation_stats.elapsed_ms += elapsed_ms_since(step_start_time);
         aggregation_stats.noise_budget_bits = decryptor.invariant_noise_budget(threshold_result);
@@ -616,22 +611,12 @@ int main(int argc, char* argv[]) {
         step_start_time = Clock::now();
         Ciphertext minus_ct = one_minus_ct(context, batch_encoder, evaluator, threshold_result, poly_modulus_degree);
 
-        size_t target = bit_length;
-        size_t i = (text_length * bit_length) / 2;
-        while (i >= target) {
+        for (size_t i = (text_length * bit_length) / 2; i >= bit_length ; i = i / 2) {
             Ciphertext rotated_ct;
             rotate_slots(minus_ct, i, poly_modulus_degree, evaluator, galois_keys, rotated_ct);
             or_stats.rot_count++;
             evaluator.multiply_inplace(minus_ct, rotated_ct);
             evaluator.relinearize_inplace(minus_ct, relin_keys);
-            
-            if (i == target) break;
-            i = i / 2;
-            
-            // If we skipped over target, jump to it
-            if (i < target && target < i * 2) {
-                i = target;
-            }
         }
 
         Ciphertext batch_result_ct = one_minus_ct(context, batch_encoder, evaluator, minus_ct, poly_modulus_degree);
@@ -677,13 +662,6 @@ int main(int argc, char* argv[]) {
     print_step_stats("Final Decrypt + Decode", final_decrypt_stats);
 
     cout << "\n=== Final Result ===\n";
-    if (verbose) {
-        cout << "First 10 result values: ";
-        for (int i = 0; i < 10 && i < static_cast<int>(result_vector.size()); ++i) {
-            cout << result_vector[i] << " ";
-        }
-        cout << "\n";
-    }
     if (result_vector[0] == 1) {
         cout << "Pattern FOUND: result_vector[0] = " << result_vector[0] << "\n";
     } else {
@@ -716,4 +694,3 @@ int main(int argc, char* argv[]) {
 
     return 0;
 }
- 

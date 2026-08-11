@@ -1,1 +1,1 @@
-product:vape,
+{product_name:vape,date:10-12-25,location:Bangkok,Thailand}

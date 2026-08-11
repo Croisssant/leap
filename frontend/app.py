@@ -160,7 +160,7 @@ with col1:
         item_image_path = os.path.join(PROJECT_ROOT, "frontend", "images", item["image"])
 
         with st.container(border=True, key="item-card"):
-            st.image(item_image_path, use_container_width=True)
+            st.image(item_image_path, width="stretch")
             st.markdown(f'<div class="product-title">{selected_item}</div>', unsafe_allow_html=True)
             st.markdown(f'<div class="product-price">{item["price"]}</div>', unsafe_allow_html=True)
             st.markdown(f'<div class="product-desc">{item["desc"]}</div>', unsafe_allow_html=True)
@@ -175,7 +175,7 @@ with col2:
     with st.container(height=700, border=False):
         text_input = st.text_area(
             "Enter the text to search in:",
-            value=selected_item.lower(),
+            value=f"{{product_name:{selected_item.lower()},date:10-12-25,location:Johor,Malaysia}}",
         # width=800,
             height=200,
             help="Enter the source text where patterns will be searched"
