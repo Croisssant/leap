@@ -4,9 +4,9 @@ import os
 import tempfile
 import re
 import json
+import time
 
 from datetime import datetime
-from streamlit_extras.let_it_rain import rain
 
 if 'run_pattern_matching' not in st.session_state:
     st.session_state.run_pattern_matching = False
@@ -26,6 +26,9 @@ if 'show_ciphertext' not in st.session_state:
 if 'ciphertext_content' not in st.session_state:
     st.session_state.ciphertext_content = None
 
+if 'matched_patterns' not in st.session_state:
+    st.session_state.matched_patterns = []
+
 def toggle_run_pattern_matching():
     st.session_state.run_pattern_matching = not st.session_state.run_pattern_matching 
 
@@ -34,6 +37,43 @@ def on_item_change():
     st.session_state.matching_results = None
     st.session_state.show_ciphertext = False
     st.session_state.ciphertext_content = None
+    st.session_state.matched_patterns = []
+
+def render_pattern_box_html(word, matched):
+    bg_color = "#ffe1e1" if matched else "#f0f2f6"
+    border = "2px solid #ff4b4b" if matched else "2px solid transparent"
+    text_color = "#c62828" if matched else "#31333F"
+    
+    return f"""
+        <div style='
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            height: 50px;
+            margin-bottom: 20px;
+            background-color: {bg_color};
+            border: {border};
+            border-radius: 8px;
+            font-size: 25px;
+            font-weight: bold;
+            color: {text_color};
+            transition: all 0.3s ease;
+        '>
+        {word}
+        </div>
+    """
+
+def render_pattern_grid():
+    """Redraws every pattern box, highlighting any word currently in
+    st.session_state.matched_patterns. Relies on `patterns` and
+    `pattern_placeholders` (dict of word -> st.empty()) already existing."""
+    for word in patterns:
+        with pattern_placeholders[word].container():
+            st.markdown(
+                render_pattern_box_html(word, word in st.session_state.matched_patterns),
+                unsafe_allow_html=True,
+            )
 
 def render_spm_placeholder():
     """Draws the right thing into spm_button_placeholder for the current state:
@@ -43,7 +83,34 @@ def render_spm_placeholder():
         spm_button_placeholder.empty()
     elif st.session_state.run_pattern_matching:
         with spm_button_placeholder.container():
-            st.info("🔐 Executing secure pattern matching on encrypted data...")
+            st.html("""
+                <style>
+                .loader {
+                    border: 4px solid #f3f3f3;
+                    border-top: 4px solid #FF4B4B; /* Streamlit Red */
+                    border-radius: 50%;
+                    width: 30px;
+                    height: 30px;
+                    animation: spin 1s linear infinite;
+                    display: inline-block;
+                    vertical-align: middle;
+                    margin-right: 10px;
+                }
+                @keyframes spin {
+                    0% { transform: rotate(0deg); }
+                    100% { transform: rotate(360deg); }
+                }
+                .loading-text {
+                    font-family: sans-serif;
+                    color: white;
+                }
+                </style>
+                <div>
+                    <div class="loader"></div>
+                    <span class="loading-text">Executing secure pattern matching on encrypted data...</span>
+                </div>
+            """)
+       
     elif st.session_state.show_product_data:
         with spm_button_placeholder.container():
             if st.button("Secure Pattern Matching", key="spm_btn", on_click=toggle_run_pattern_matching, width='stretch'):
@@ -78,7 +145,6 @@ st.set_page_config(
 )
 
 st.title("Digital Transaction Compliance Tool")
-st.write("Risk control stragegy to ban illegal transaction via homomorphic encryption-based pattern matching.")
 
 st.markdown(
     """
@@ -163,12 +229,16 @@ with col1:
        
         ITEMS = {
             "Vape": {
-                "price": "RM99.99",
+                "display_name": "VapeVac(Registered AMZ Brand) – Pocket-Sized Personal Air Filter for Discreet Output Reduction | Minimizes Odor, Keeps Air Fresh | Not an Emission Device – 500+ Uses",
+                "price": "99.99",
+                "currency": "RM",
                 "desc": "Features a sleek, pocket-friendly aluminum chassis paired with an optimized heating element. Delivers smooth, consistent vapor production with a long-lasting rechargeable battery.",
                 "image": "vape.jpg",
             },
             "Lighter": {
-                "price": "RM19.99",
+                "display_name": "Lighter",
+                "price": "19.99",
+                "currency": "RM",
                 "desc": "A compact, refillable butane lighter with a windproof flame and ergonomic grip.",
                 "image": "lighter.jpg",
             },
@@ -184,18 +254,24 @@ with col1:
 
         with st.container(border=True, key="item-card"):
             st.image(item_image_path, width="stretch")
-            st.markdown(f'<div class="product-title">{selected_item}</div>', unsafe_allow_html=True)
-            st.markdown(f'<div class="product-price">{item["price"]}</div>', unsafe_allow_html=True)
-            st.markdown(f'<div class="product-desc">{item["desc"]}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="product-title">{item["display_name"]}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="product-price">{item["currency"]} {item["price"]}</div>', unsafe_allow_html=True)
+            # st.markdown(f'<div class="product-desc">{item["desc"]}</div>', unsafe_allow_html=True)
 
             if st.button("Buy Now", key="buy_btn"):
                 st.session_state.matching_results = None
                 st.session_state.show_product_data = True
                 st.session_state.show_ciphertext = False
                 st.session_state.ciphertext_content = None
+                st.session_state.matched_patterns = []
+                TEXT_LIMIT = 10
+                json_product_name = ITEMS[selected_item]["display_name"].lower()
+                
                 st.session_state.product_data = json.dumps(
                 {
-                    "product_name": selected_item.lower(),
+                    "product_name": json_product_name[:TEXT_LIMIT] + "..." if len(json_product_name) > TEXT_LIMIT else json_product_name,
+                    "currency": ITEMS[selected_item]["currency"],
+                    "price": ITEMS[selected_item]["price"],
                     "date": datetime.now(),
                     "location": "Singapore"
                 },
@@ -213,34 +289,20 @@ with combined_col:
             if st.session_state.show_product_data:
                 st.json(st.session_state.product_data, expanded=True, width="stretch")
 
+            else:
+                st.container(height=400)
+
         with col3:
-            patterns = ["vape", "drug", "acid", "bomb", "mace", "hemp"]
+            patterns = ["vape", "drug", "njoy", "bomb", "vuse", "smok", "kpod", "juul"]
             st.subheader("🔍 Global Payment (AliPay+)")
             num_cols = 2
             cols = st.columns(num_cols)
+            pattern_placeholders = {}
             for index, word in enumerate(patterns):
                 col_idx = index % num_cols
-
-                with cols[col_idx].container():
-                    st.markdown(
-                        f"""
-                            <div style='
-                                display: flex;
-                                align-items: center;
-                                justify-content: center;
-                                width: 100%;
-                                height: 50px;
-                                margin-bottom: 20px;
-                                background-color: #f0f2f6;
-                                border-radius: 8px;
-                                font-size: 25px;
-                                font-weight: bold;
-                                color: #31333F;
-                            '>
-                            {word}
-                            </div>
-                        """, 
-                        unsafe_allow_html=True)
+                pattern_placeholders[word] = cols[col_idx].empty()
+            st.caption("Showing 8 out 1024 words")
+            render_pattern_grid()
 
         spm_button_placeholder = st.empty()
         render_spm_placeholder()
@@ -251,7 +313,7 @@ with combined_col:
         # fresh every script run, so its previous contents don't survive on their own)
         if st.session_state.show_ciphertext and st.session_state.ciphertext_content:
             with ciphertext_display.container():
-                st.markdown("### Ciphertext")
+                st.markdown("### Encrypted Product Name")
                 st.code(st.session_state.ciphertext_content["hex"], language="text")
                 st.caption(st.session_state.ciphertext_content["caption"])
 
@@ -262,13 +324,15 @@ with col4:
    with st.container(height=700, border=False):
     loading_placeholder = st.empty()
     with loading_placeholder.container():
-        st.info("Awaiting payment...")
+        st.info("Awaiting payment...", icon="spinner")
   
 
 # 4. Execution Logic
 if st.session_state.run_pattern_matching:
     # Input validation
+    # text_input = ITEMS[selected_item]["display_name"].lower()
     text_input = st.session_state.product_data
+    # print(text_input)
 
     pattern_lengths = [len(p) for p in patterns]
     if len(set(pattern_lengths)) > 1:
@@ -282,12 +346,6 @@ if st.session_state.run_pattern_matching:
             st.error(f"❌ Threshold ({threshold}) cannot be greater than pattern length ({pattern_length})")
             st.info(f"💡 Set threshold to -1 or {pattern_length} for exact matching, or a value between 1 and {pattern_length} for approximate matching")
         else:
-            # Show effective threshold info
-            if threshold <= 0 or threshold == pattern_length:
-                st.toast(f"exact matching mode (threshold: {pattern_length})", icon='ℹ️')
-            else:
-                st.toast(f"approximate matching mode (threshold: {threshold})", icon='ℹ️')
-            
             # Create a temporary directory to safely store input files for the binary to read
             with tempfile.TemporaryDirectory() as tmpdir:
                 text_path = os.path.join(tmpdir, "text.txt")
@@ -366,14 +424,26 @@ if st.session_state.run_pattern_matching:
                             pattern_batch_count = int(line.split("PATTERN_BATCH_COUNT:")[1].strip())
                         
                     if match_found:
-                        st.toast(f"MATCH FOUND")
                         st.session_state.matching_results = True  
-                        loading_placeholder.error("Payment Rejected")
-                        
+
+                        # The encrypted computation only confirms THAT a pattern
+                        # matched, not which one - that's by design, since which
+                        # pattern matched is itself sensitive. Since we're on the
+                        # buyer's side and already hold the plaintext product data
+                        # pre-encryption, we can do a cheap local substring check
+                        # purely to decide which box to highlight in the UI.
+                        try:
+                            product_fields = json.loads(text_input)
+                            searchable_text = " ".join(str(v) for v in product_fields.values()).lower()
+                        except (json.JSONDecodeError, TypeError):
+                            searchable_text = text_input.lower()
+                        st.session_state.matched_patterns = [
+                            p for p in patterns if p.lower() in searchable_text
+                        ]
+
                     else:
-                        st.toast(f"NO MATCH FOUND")
                         st.session_state.matching_results = False
-                        loading_placeholder.success("Payment Accepted")
+                        st.session_state.matched_patterns = []
 
                     if st.session_state.matching_results is not None:
                         if ciphertext_path:
@@ -391,7 +461,7 @@ if st.session_state.run_pattern_matching:
                                 caption = f"Showing first {min(256, len(ciphertext_data))} bytes of {len(ciphertext_data)} total bytes"
 
                                 with ciphertext_display.container():
-                                    st.markdown("### Ciphertext")
+                                    st.markdown("### Encrypted Product Name")
                                     st.code(hex_code, language="text")
                                     st.caption(caption)
 
@@ -402,7 +472,17 @@ if st.session_state.run_pattern_matching:
                                     "hex": hex_code,
                                     "caption": caption,
                                 }
-                   
+
+                                time.sleep(1)
+
+                    if match_found:
+                        loading_placeholder.error("Payment Rejected")
+  
+                    else:
+                        loading_placeholder.success("Payment Accepted")
+                
+
+                    render_pattern_grid()
                 except subprocess.CalledProcessError as e:
                     # Parse error message for specific issues
                     error_output = e.stderr if e.stderr else e.stdout if hasattr(e, 'stdout') else ""
