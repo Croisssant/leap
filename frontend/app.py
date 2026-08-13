@@ -29,6 +29,9 @@ if 'ciphertext_content' not in st.session_state:
 if 'matched_patterns' not in st.session_state:
     st.session_state.matched_patterns = []
 
+if 'seller_wallet_balance' not in st.session_state:
+    st.session_state.seller_wallet_balance = "0.00"
+
 def toggle_run_pattern_matching():
     st.session_state.run_pattern_matching = not st.session_state.run_pattern_matching 
 
@@ -38,6 +41,7 @@ def on_item_change():
     st.session_state.show_ciphertext = False
     st.session_state.ciphertext_content = None
     st.session_state.matched_patterns = []
+    st.session_state.seller_wallet_balance = "0.00"
 
 def render_pattern_box_html(word, matched):
     bg_color = "#ffe1e1" if matched else "#f0f2f6"
@@ -63,6 +67,18 @@ def render_pattern_box_html(word, matched):
         {word}
         </div>
     """
+
+def render_wallet_balance():
+    """Redraws the seller's wallet balance from st.session_state.seller_wallet_balance.
+    Relies on `wallet_balance_placeholder` (an st.empty()) already existing."""
+    with wallet_balance_placeholder.container():
+        st.markdown(
+            '<div class="wallet-card-inner">'
+            '<div class="wallet-label">Wallet Balance</div>'
+            f'<div class="wallet-amount"><span class="wallet-currency">RM</span><div class="wallet-value-div"><span class="wallet-value">{st.session_state.seller_wallet_balance}</span></div></div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
 
 def render_pattern_grid():
     """Redraws every pattern box, highlighting any word currently in
@@ -180,8 +196,8 @@ st.markdown(
         font-size: 25px;
         font-weight: 600;
         color: #1a1a1a;
-        margin-top: 10px;
-        margin-bottom: 5px;
+        line-height: 1.4;
+        margin: 1px 0;
     }
     .product-price {
         font-size: 18px;
@@ -211,6 +227,86 @@ st.markdown(
         color: white;
         border: none;
     }
+    .st-key-spm_btn button div p {
+        font-size: 24px;
+        font-weight: bold;
+    }
+    .st-key-wallet_balance {
+        background: linear-gradient(135deg, #4f8cff 0%, #7b2ff7 100%);
+        color: #ffffff;
+        border-radius: 16px;
+        overflow: hidden;
+        border: 3px solid rgba(255, 255, 255, 0.15);
+        border-width: 0 3px 3px 0;
+
+        box-shadow: 
+            0 15px 30px rgba(0, 0, 0, 0.6),
+            0 5px 15px rgba(0, 0, 0, 0.4);
+                
+    }
+    .wallet-card-inner {
+        display: grid;
+        height: 200px;
+        box-sizing: border-box;
+        padding: 24px;
+    }
+    .wallet-label {
+        grid-area: 1 / 1;
+        align-self: start;
+        justify-self: start;
+        font-size: 13px;
+        font-weight: 600;
+        color: rgba(255, 255, 255, 0.75);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+    }
+    .wallet-amount {
+        display: flex;
+        flex-direction: row;
+        align-items: flex-start;
+        width: 200px;
+        grid-area: 1 / 1;
+        align-self: center;
+        justify-self: center;
+        font-weight: 700;
+        color: #ffffff;
+        margin-top: 30px;
+    }
+    .wallet-currency {
+        font-size: 30px;
+        font-weight: 600;
+        color: rgba(255, 255, 255, 0.75);
+        margin-right: 40px;
+        line-height: 1;
+    }
+    .wallet-value-div {
+        display: flex;
+        align-items: flex-start;
+        align-self: center;
+        justify-self: center;
+        height: 70px;
+    }
+    .wallet-value {
+        font-size: 60px;
+        line-height: 1;
+        margin-top: -10px;
+    }
+    [data-testid="stAlert"] p, 
+    [data-testid="stNotification"] p {
+        font-size: 25px;
+    }
+    .st-key-json-card {
+        backgound: linear-gradient(135deg, #22252a 0%, #181af 100%);
+        color: #e2e8f0;
+        border-radius: 16px;
+   
+        width: 100%;
+        
+        border: 4px solid #2d3139;
+        box-shadow:
+            inset 0 4px 10px rgba(0, 0, 0, 0.4),
+            0 15px 30px rgba(0, 0, 0, 0.6);
+    }
     </style>
     """,
     unsafe_allow_html=True,  # Fixed argument name here
@@ -223,9 +319,9 @@ threshold = -1
 col1, combined_col, col4 = st.columns([1, 2, 1])
 
 with col1:
-    st.subheader("🔍 E-commerce Store")
+    st.subheader("E-commerce Store")
   
-    with st.container(height=700, border=False):
+    with st.container(height=900, border=False):
        
         ITEMS = {
             "Vape": {
@@ -285,23 +381,23 @@ with combined_col:
         col2, col3 = st.columns([1, 1])
     
         with col2:
-            st.subheader("📝 Buyer's Wallet (PayNow)")
-            if st.session_state.show_product_data:
-                st.json(st.session_state.product_data, expanded=True, width="stretch")
+            st.subheader("Buyer's Wallet (PayNow)")
+            with st.container(height=500, key="json-card"):
+                if st.session_state.show_product_data:
+                    st.json(st.session_state.product_data, expanded=True, width="stretch")
 
-            else:
-                st.container(height=400)
+                
 
         with col3:
             patterns = ["vape", "drug", "njoy", "bomb", "vuse", "smok", "kpod", "juul"]
-            st.subheader("🔍 Global Payment (AliPay+)")
+            st.subheader("Global Payment (AliPay+)")
             num_cols = 2
             cols = st.columns(num_cols)
             pattern_placeholders = {}
             for index, word in enumerate(patterns):
                 col_idx = index % num_cols
                 pattern_placeholders[word] = cols[col_idx].empty()
-            st.caption("Showing 8 out 1024 words")
+            st.caption("<p style='font-size: 20px;'>Showing 8 out 1024 words</p>", unsafe_allow_html=True)
             render_pattern_grid()
 
         spm_button_placeholder = st.empty()
@@ -319,12 +415,14 @@ with combined_col:
 
 
 with col4:
-   st.subheader("🔍 Seller's Wallet (TnG)")
+   st.subheader("Seller's Wallet (TnG)")
    
    with st.container(height=700, border=False):
+    with st.container(height=200, border=False, key="wallet_balance"):
+        wallet_balance_placeholder = st.empty()
+        render_wallet_balance()
+
     loading_placeholder = st.empty()
-    with loading_placeholder.container():
-        st.info("Awaiting payment...", icon="spinner")
   
 
 # 4. Execution Logic
@@ -335,6 +433,11 @@ if st.session_state.run_pattern_matching:
     # print(text_input)
 
     pattern_lengths = [len(p) for p in patterns]
+
+    with loading_placeholder.container():
+       
+        st.info("Awaiting payment...")
+
     if len(set(pattern_lengths)) > 1:
         st.error(f"❌ All patterns must have the same length. Found lengths: {set(pattern_lengths)}")
     else:
@@ -477,9 +580,11 @@ if st.session_state.run_pattern_matching:
 
                     if match_found:
                         loading_placeholder.error("Payment Rejected")
-  
+
                     else:
                         loading_placeholder.success("Payment Accepted")
+                        st.session_state.seller_wallet_balance = f"{ITEMS[selected_item]['price']}"
+                        render_wallet_balance()
                 
 
                     render_pattern_grid()
