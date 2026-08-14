@@ -44,29 +44,8 @@ def on_item_change():
     st.session_state.seller_wallet_balance = "0.00"
 
 def render_pattern_box_html(word, matched):
-    bg_color = "#ffe1e1" if matched else "#f0f2f6"
-    border = "2px solid #ff4b4b" if matched else "2px solid transparent"
-    text_color = "#c62828" if matched else "#31333F"
-    
-    return f"""
-        <div style='
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            width: 100%;
-            height: 50px;
-            margin-bottom: 20px;
-            background-color: {bg_color};
-            border: {border};
-            border-radius: 8px;
-            font-size: 25px;
-            font-weight: bold;
-            color: {text_color};
-            transition: all 0.3s ease;
-        '>
-        {word}
-        </div>
-    """
+    css_class = "pattern-chip-matched" if matched else "pattern-chip"
+    return f'<div class="{css_class}">{word}</div>'
 
 def render_wallet_balance():
     """Redraws the seller's wallet balance from st.session_state.seller_wallet_balance.
@@ -79,6 +58,12 @@ def render_wallet_balance():
             '</div>',
             unsafe_allow_html=True,
         )
+
+def render_ciphertext_card(hex_code, caption):
+    st.markdown("### Encrypted Product Name")
+    with st.container(key="ciphertext-card", border=True):
+        st.code(hex_code, language="text", width="content")
+    st.caption(caption)
 
 def render_pattern_grid():
     """Redraws every pattern box, highlighting any word currently in
@@ -160,8 +145,6 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("Digital Transaction Compliance Tool")
-
 st.markdown(
     """
     <style>
@@ -227,6 +210,29 @@ st.markdown(
         color: white;
         border: none;
     }
+    .st-key-spm_btn button {
+        background-color: #8FAEEB !important;
+       border-radius: 16px !important;
+        overflow: hidden !important;
+        
+        /* 1. The Raised Border Trick */
+        border-style: solid !important;
+        border-width: 2px 4px 5px 2px !important;                 /* Thicker on bottom/right */
+        border-color: #B2C9F3 #6385CE #4B6AA6 #A1BCEF !important; /* Top (light), Right (dark), Bottom (darkest), Left (light) */
+
+        /* 2. Optimized Drop Shadow for depth */
+        box-shadow: 
+            0 8px 16px rgba(0, 0, 0, 0.3),
+            inset 0 2px 3px rgba(255, 255, 255, 0.4) !important; /* Inner top glow for gloss */
+            
+        /* Smooth transformation physics */
+        transition: transform 0.1s ease, box-shadow 0.1s ease !important;
+    }
+    .st-key-spm_btn button:active {
+        transform: translateY(3px) translateX(1px) !important;
+        border-width: 3px 3px 2px 3px !important;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2) !important;
+    }
     .st-key-spm_btn button div p {
         font-size: 24px;
         font-weight: bold;
@@ -291,12 +297,89 @@ st.markdown(
         line-height: 1;
         margin-top: -10px;
     }
+    .st-key-wallet-payment-panel {
+        background-color: #181b20;
+        border-radius: 16px !important;
+        border: 1px solid rgba(255, 255, 255, 0.08) !important;
+        box-shadow:
+            0 20px 40px rgba(0, 0, 0, 0.55),
+            0 8px 16px rgba(0, 0, 0, 0.4),
+            inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
+    }
+    .st-key-pattern-panel {
+    
+        border-radius: 16px !important;
+        border: 4px solid #2d3139 !important;
+        box-shadow:
+            inset 6px 6px 14px rgba(0, 0, 0, 0.85),
+            inset -4px -4px 10px rgba(255, 255, 255, 0.03) !important;
+    }
+    .pattern-chip {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        height: 48px;
+        margin-bottom: 14px;
+        background: linear-gradient(135deg, #f8f9fb 0%, #edeff3 100%);
+        border: 3px solid rgba(0, 0, 0, 0.3);
+        border-width: 0 3px 3px 0;
+        border-radius: 10px;
+        box-shadow:
+            inset 0 1px 0 rgba(255, 255, 255, 0.9),
+            0 10px 18px rgba(0, 0, 0, 0.6);
+        font-size: 20px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        color: #4b5160;
+        transition: all 0.3s ease;
+    }
+    .pattern-chip-matched {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        height: 48px;
+        margin-bottom: 14px;
+        border-radius: 10px;
+        font-size: 20px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        transition: all 0.3s ease;
+        background: linear-gradient(135deg, #ff6b6b 0%, #c62828 100%);
+        border: 3px solid rgba(80, 0, 0, 0.5);
+        border-width: 0 3px 3px 0;
+        color: #ffffff;
+        box-shadow:
+            inset 0 1px 0 rgba(255, 255, 255, 0.5),
+            0 10px 20px rgba(198, 40, 40, 0.7);
+        animation: pattern-flag-pulse 1.4s ease-in-out infinite;
+    }
+    @keyframes pattern-flag-pulse {
+        0%, 100% {
+            box-shadow:
+                inset 0 1px 0 rgba(255, 255, 255, 0.5),
+                0 10px 20px rgba(198, 40, 40, 0.7);
+        }
+        50% {
+            box-shadow:
+                inset 0 1px 0 rgba(255, 255, 255, 0.55),
+                0 12px 28px rgba(198, 40, 40, 1);
+        }
+    }
     [data-testid="stAlert"] p, 
     [data-testid="stNotification"] p {
         font-size: 25px;
     }
+    .st-key-ciphertext-card {
+        border-radius: 16px !important;
+        border: 4px solid #2d3139 !important;
+        box-shadow:
+            inset 6px 6px 14px rgba(0, 0, 0, 0.85),
+            inset -4px -4px 10px rgba(255, 255, 255, 0.03) !important;
+    }
     .st-key-json-card {
-        backgound: linear-gradient(135deg, #22252a 0%, #181af 100%);
+        background: linear-gradient(135deg, #0e1117 0%, #0e1117 100%);
         color: #e2e8f0;
         border-radius: 16px;
    
@@ -304,15 +387,25 @@ st.markdown(
         
         border: 4px solid #2d3139;
         box-shadow:
-            inset 0 4px 10px rgba(0, 0, 0, 0.4),
-            0 15px 30px rgba(0, 0, 0, 0.6);
+            inset 6px 6px 14px rgba(0, 0, 0, 0.85),
+            inset -4px -4px 10px rgba(255, 255, 255, 0.03);
+    }
+    .glowing-text {
+        margin-top: -10px;
+        color: white;
+        font-size: 35px;
+        text-shadow:
+            0 0 6px rgba(255, 255, 255, 0.60),  /* Crisp, half-transparent edge */
+            0 0 20px rgba(255, 255, 255, 0.25), /* Very soft, faint outer glow */
+            0 0 40px rgba(138, 153, 173, 0.15); /* Tiny hint of background matching grey */
     }
     </style>
     """,
     unsafe_allow_html=True,  # Fixed argument name here
 )
 
-
+# st.title("Digital Transaction Compliance Tool")
+st.html("<h1 class='glowing-text'>Digital Transaction Compliance Tool</h1>")
 
 threshold = -1
 # 3. Text Input Fields in Main Layout - Two Column Layout
@@ -377,7 +470,7 @@ with col1:
 
 
 with combined_col:
-    with st.container(border=True):
+    with st.container(border=True, key="wallet-payment-panel"):
         col2, col3 = st.columns([1, 1])
     
         with col2:
@@ -391,14 +484,17 @@ with combined_col:
         with col3:
             patterns = ["vape", "drug", "njoy", "bomb", "vuse", "smok", "kpod", "juul"]
             st.subheader("Global Payment (AliPay+)")
-            num_cols = 2
-            cols = st.columns(num_cols)
-            pattern_placeholders = {}
-            for index, word in enumerate(patterns):
-                col_idx = index % num_cols
-                pattern_placeholders[word] = cols[col_idx].empty()
-            st.caption("<p style='font-size: 20px;'>Showing 8 out 1024 words</p>", unsafe_allow_html=True)
-            render_pattern_grid()
+            with st.container(border=True, key="pattern-panel"):
+                num_cols = 2
+                cols = st.columns(num_cols)
+                pattern_placeholders = {}
+                for index, word in enumerate(patterns):
+                    col_idx = index % num_cols
+                    pattern_placeholders[word] = cols[col_idx].empty()
+                
+                render_pattern_grid()
+            st.markdown("<p style='font-size: 20px; color: #E3E4E5;'>Showing 8 out 1024 words</p>", unsafe_allow_html=True)
+   
 
         spm_button_placeholder = st.empty()
         render_spm_placeholder()
@@ -409,9 +505,10 @@ with combined_col:
         # fresh every script run, so its previous contents don't survive on their own)
         if st.session_state.show_ciphertext and st.session_state.ciphertext_content:
             with ciphertext_display.container():
-                st.markdown("### Encrypted Product Name")
-                st.code(st.session_state.ciphertext_content["hex"], language="text")
-                st.caption(st.session_state.ciphertext_content["caption"])
+                render_ciphertext_card(
+                    st.session_state.ciphertext_content["hex"],
+                    st.session_state.ciphertext_content["caption"],
+                )
 
 
 with col4:
@@ -556,17 +653,15 @@ if st.session_state.run_pattern_matching:
                                     ciphertext_data = f.read()
                                     
                                 # Display hex preview in expandable section
-                                hex_preview = ciphertext_data[:256].hex()
+                                hex_preview = ciphertext_data[:128].hex()
                                 # Format hex in lines of 64 characters (32 bytes per line)
                                 formatted_hex = '\n'.join([hex_preview[i:i+64] for i in range(0, len(hex_preview), 64)])
 
-                                hex_code = formatted_hex + "\n..." if len(ciphertext_data) > 256 else formatted_hex
-                                caption = f"Showing first {min(256, len(ciphertext_data))} bytes of {len(ciphertext_data)} total bytes"
+                                hex_code = formatted_hex + "\n..." if len(ciphertext_data) > 128 else formatted_hex
+                                caption = f"Showing first {min(128, len(ciphertext_data))} bytes of {len(ciphertext_data)} total bytes"
 
                                 with ciphertext_display.container():
-                                    st.markdown("### Encrypted Product Name")
-                                    st.code(hex_code, language="text")
-                                    st.caption(caption)
+                                    render_ciphertext_card(hex_code, caption)
 
                                 # Remember this so it keeps rendering on future reruns,
                                 # and so the "Secure Pattern Matching" button stays hidden
