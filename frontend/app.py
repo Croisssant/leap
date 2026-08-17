@@ -69,7 +69,7 @@ def render_pattern_grid():
     """Redraws every pattern box, highlighting any word currently in
     st.session_state.matched_patterns. Relies on `patterns` and
     `pattern_placeholders` (dict of word -> st.empty()) already existing."""
-    for word in patterns:
+    for word in display_patterns:
         with pattern_placeholders[word].container():
             st.markdown(
                 render_pattern_box_html(word, word in st.session_state.matched_patterns),
@@ -425,7 +425,7 @@ with col1:
                 "image": "vape.jpg",
             },
             "Lighter": {
-                "display_name": "Lighter",
+                "display_name": "SUPRUS Electric Lighter Arc Windproof Flameless USB Rechargeable Lighter with Safety Lock",
                 "price": "19.99",
                 "currency": "RM",
                 "desc": "A compact, refillable butane lighter with a windproof flame and ergonomic grip.",
@@ -482,18 +482,24 @@ with combined_col:
                 
 
         with col3:
-            patterns = ["vape", "drug", "njoy", "bomb", "vuse", "smok", "kpod", "juul"]
+            display_patterns = ["vape", "hookah", "njoy", "bomb", "e-juice", "smok", "kpod", "e-cigeratte"]
             st.subheader("Global Payment (AliPay+)")
             with st.container(border=True, key="pattern-panel"):
                 num_cols = 2
                 cols = st.columns(num_cols)
                 pattern_placeholders = {}
-                for index, word in enumerate(patterns):
+                for index, word in enumerate(display_patterns):
                     col_idx = index % num_cols
                     pattern_placeholders[word] = cols[col_idx].empty()
                 
                 render_pattern_grid()
-            st.markdown("<p style='font-size: 20px; color: #E3E4E5;'>Showing 8 out 1024 words</p>", unsafe_allow_html=True)
+                st.markdown("""
+                    <div style="display: flex; gap: 20px; justify-content: center; align-items: center; margin-bottom: 10px;">
+                        <div style="width: 15px; height: 15px; background-color: white; border-radius: 50%;"></div>
+                        <div style="width: 15px; height: 15px; background-color: white; border-radius: 50%;"></div>
+                        <div style="width: 15px; height: 15px; background-color: white; border-radius: 50%;"></div>
+                    </div>""", unsafe_allow_html=True)
+            st.markdown("<p style='font-size: 30px; color: #E3E4E5;'>Showing 8 of 1024 restricted items</p>", unsafe_allow_html=True)
    
 
         spm_button_placeholder = st.empty()
@@ -525,10 +531,10 @@ with col4:
 # 4. Execution Logic
 if st.session_state.run_pattern_matching:
     # Input validation
-    # text_input = ITEMS[selected_item]["display_name"].lower()
-    text_input = st.session_state.product_data
+    text_input = ITEMS[selected_item]["display_name"].lower()
+    # text_input = st.session_state.product_data
     # print(text_input)
-
+    patterns = ["vape", "drug", "njoy", "bomb", "vuse", "smok", "kpod", "juul"]
     pattern_lengths = [len(p) for p in patterns]
 
     with loading_placeholder.container():
@@ -638,7 +644,7 @@ if st.session_state.run_pattern_matching:
                         except (json.JSONDecodeError, TypeError):
                             searchable_text = text_input.lower()
                         st.session_state.matched_patterns = [
-                            p for p in patterns if p.lower() in searchable_text
+                            p for p in display_patterns if p.lower() in searchable_text
                         ]
 
                     else:
