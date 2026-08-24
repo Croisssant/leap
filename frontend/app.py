@@ -119,6 +119,85 @@ def render_spm_placeholder():
     else:
         spm_button_placeholder.empty()
 
+def custom_colored_json(json_str, target_key):
+    # 🎨 CONFIGURATION: Set your exact colors here
+    COLOR_KEYS = "#E5E8ED"
+    COLOR_VALUES = "#FD971F"
+    
+    # Highlight style for the targeted value
+    HIGHLIGHT_BG = "#FD971F" 
+    HIGHLIGHT_TEXT = "#2A1D12"
+
+    # 1. Generate formatted JSON string and escape safety tokens
+    json_str = json_str.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    
+    # 2. Match keys, string values, booleans, and numbers
+    # Group 1 = Keys, Group 2 = Values
+    pattern = r'("[^"]*"\s*:)|("[^"]*"|true|false|\b\d+\b)'
+    
+    def process_token(match):
+        key_match = match.group(1)
+        value_match = match.group(2)
+        
+        if key_match:
+            # Colorize all keys uniformly
+            return f'<span style="color: {COLOR_KEYS};">{key_match}</span>'
+        elif value_match:
+            # Colorize standard values uniformly
+            return f'<span style="color: {COLOR_VALUES};">{value_match}</span>'
+        return match.group(0)
+
+    # First pass: Color all components uniformly
+    processed_html = re.sub(pattern, process_token, json_str)
+    
+    # 3. Second pass: Locate the colorized target key and replace its following value span
+    # This precisely finds our target key span, matches whitespace/colons, and grabs the next value span
+    target_pattern = (
+        r'(<span style="[^"]*">"' + re.escape(target_key) + r'"\s*:</span>)'  # Target Key Span
+        r'(\s*)'                                                               # Space
+        r'(<span style="[^"]*">)([^<]+)(</span>)'                             # Original Value Span
+    )
+    
+    def inject_special_highlight(m):
+        key_span = m.group(1)
+        spacing = m.group(2)
+        # Reconstruct the value span with your special highlight configuration
+        new_value_span = (
+            f'<span style="'
+            f'background-color: {HIGHLIGHT_BG}; '
+            f'color: {HIGHLIGHT_TEXT}; '
+            f'font-weight: bold; '
+            f'padding: 2px 6px; '
+            f'border-radius: 4px; '
+        
+            f'">{m.group(4)}</span>'
+        )
+        return f"{key_span}{spacing}{new_value_span}"
+        
+    final_html = re.sub(target_pattern, inject_special_highlight, processed_html)
+    
+    # 4. Construct wrapper mirroring native st.json layout
+    return (
+        '<div style="'
+        'font-family: monospace; '
+        'font-size: 25px; '
+        'font-weight: bold; '
+        'background-color: transparent; '
+        'padding: 10px 0px; '
+        'line-height: 1.6;'
+        '">'
+        '<pre style="'
+        'margin: 0; '
+        'font-family: inherit; '
+        'white-space: pre-wrap; '
+        'word-wrap: normal;'
+        '"><code>'
+        + final_html +
+        '</code></pre>'
+        '</div>'
+    )
+
+   
 # Helper function to find project root
 def find_project_root():
     """Find the project root by looking for CMakeLists.txt"""
@@ -154,10 +233,6 @@ st.markdown(
     .block-container {
         padding-top: 1rem;
         padding-bottom: 0rem;
-    }
-    div[data-testid="stJson"] span, 
-    div[data-testid="stJson"] pre {
-        font-size: 25px;
     }
     .st-key-item-card {
         background-color: #ffffff !important;
@@ -405,7 +480,7 @@ st.markdown(
 )
 
 # st.title("Digital Transaction Compliance Tool")
-st.html("<h1 class='glowing-text'>Digital Transaction Compliance Tool</h1>")
+st.html("<h1 class='glowing-text'>Fast Secure Multi-Pattern Matching for Alipay+ Risk Control Strategy</h1>")
 
 threshold = -1
 # 3. Text Input Fields in Main Layout - Two Column Layout
@@ -453,7 +528,7 @@ with col1:
                 st.session_state.show_ciphertext = False
                 st.session_state.ciphertext_content = None
                 st.session_state.matched_patterns = []
-                TEXT_LIMIT = 10
+                TEXT_LIMIT = 30
                 json_product_name = ITEMS[selected_item]["display_name"].lower()
                 
                 st.session_state.product_data = json.dumps(
@@ -464,7 +539,7 @@ with col1:
                     "date": datetime.now(),
                     "location": "Singapore"
                 },
-                indent=4,
+                indent=2,
                 default=str)
               
 
@@ -477,7 +552,9 @@ with combined_col:
             st.subheader("Buyer's Wallet (PayNow)")
             with st.container(height=500, key="json-card"):
                 if st.session_state.show_product_data:
-                    st.json(st.session_state.product_data, expanded=True, width="stretch")
+                    
+                    st.html(custom_colored_json(st.session_state.product_data, target_key="product_name")) 
+                    #st.json(st.session_state.product_data, expanded=True, width="stretch")
 
                 
 
