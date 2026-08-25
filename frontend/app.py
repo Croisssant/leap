@@ -26,8 +26,11 @@ if 'show_ciphertext' not in st.session_state:
 if 'ciphertext_content' not in st.session_state:
     st.session_state.ciphertext_content = None
 
-if 'matched_patterns' not in st.session_state:
-    st.session_state.matched_patterns = []
+if 'pattern_panel_matched' not in st.session_state:
+    st.session_state.pattern_panel_matched = False
+
+if 'pattern_panel_call_id' not in st.session_state:
+    st.session_state.pattern_panel_call_id = 0
 
 if 'seller_wallet_balance' not in st.session_state:
     st.session_state.seller_wallet_balance = "0.00"
@@ -40,12 +43,11 @@ def on_item_change():
     st.session_state.matching_results = None
     st.session_state.show_ciphertext = False
     st.session_state.ciphertext_content = None
-    st.session_state.matched_patterns = []
+    st.session_state.pattern_panel_matched = False
     st.session_state.seller_wallet_balance = "0.00"
 
-def render_pattern_box_html(word, matched):
-    css_class = "pattern-chip-matched" if matched else "pattern-chip"
-    return f'<div class="{css_class}">{word}</div>'
+def render_pattern_box_html(word):
+    return f'<div class="pattern-chip">{word}</div>'
 
 def render_wallet_balance():
     """Redraws the seller's wallet balance from st.session_state.seller_wallet_balance.
@@ -65,16 +67,37 @@ def render_ciphertext_card(hex_code, caption):
         st.code(hex_code, language="text", width="content")
     st.caption(caption)
 
-def render_pattern_grid():
-    """Redraws every pattern box, highlighting any word currently in
-    st.session_state.matched_patterns. Relies on `patterns` and
-    `pattern_placeholders` (dict of word -> st.empty()) already existing."""
-    for word in display_patterns:
-        with pattern_placeholders[word].container():
-            st.markdown(
-                render_pattern_box_html(word, word in st.session_state.matched_patterns),
-                unsafe_allow_html=True,
-            )
+def render_pattern_panel():
+    """Redraws the whole pattern panel into `pattern_panel_placeholder`
+    (an st.empty() already existing). The panel's container key switches
+    between the plain and "matched" styling depending on
+    st.session_state.pattern_panel_matched, so the panel itself changes
+    color when a match is found - individual chips are always plain.
+
+    This can be called more than once within the same script run (e.g.
+    once for the initial layout, again after the backend result comes
+    back), and Streamlit requires explicit keys to be unique per run even
+    across placeholder redraws - so a monotonically increasing call id is
+    appended to the key. The CSS below matches on the key *prefix* rather
+    than the exact key so styling still applies regardless of the suffix."""
+    st.session_state.pattern_panel_call_id += 1
+    call_id = st.session_state.pattern_panel_call_id
+    key_prefix = "pattern-panel-matched" if st.session_state.pattern_panel_matched else "pattern-panel-plain"
+    panel_key = f"{key_prefix}-{call_id}"
+    with pattern_panel_placeholder.container():
+        with st.container(border=True, key=panel_key):
+            num_cols = 2
+            cols = st.columns(num_cols)
+            for index, word in enumerate(display_patterns):
+                col_idx = index % num_cols
+                with cols[col_idx]:
+                    st.markdown(render_pattern_box_html(word), unsafe_allow_html=True)
+            st.markdown("""
+                <div style="display: flex; gap: 20px; justify-content: center; align-items: center; margin-bottom: 10px;">
+                    <div style="width: 15px; height: 15px; background-color: white; border-radius: 50%;"></div>
+                    <div style="width: 15px; height: 15px; background-color: white; border-radius: 50%;"></div>
+                    <div style="width: 15px; height: 15px; background-color: white; border-radius: 50%;"></div>
+                </div>""", unsafe_allow_html=True)
 
 def render_spm_placeholder():
     """Draws the right thing into spm_button_placeholder for the current state:
@@ -381,13 +404,23 @@ st.markdown(
             0 8px 16px rgba(0, 0, 0, 0.4),
             inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
     }
-    .st-key-pattern-panel {
+    [class*="st-key-pattern-panel-plain-"] {
     
         border-radius: 16px !important;
         border: 4px solid #2d3139 !important;
         box-shadow:
             inset 6px 6px 14px rgba(0, 0, 0, 0.85),
             inset -4px -4px 10px rgba(255, 255, 255, 0.03) !important;
+    }
+    [class*="st-key-pattern-panel-matched-"] {
+    
+        border-radius: 16px !important;
+        border: 4px solid #c62828 !important;
+        box-shadow:
+            inset 6px 6px 14px rgba(80, 0, 0, 0.85),
+            inset -4px -4px 10px rgba(255, 107, 107, 0.08),
+            0 0 24px rgba(198, 40, 40, 0.55) !important;
+        transition: all 0.3s ease;
     }
     .pattern-chip {
         display: flex;
@@ -396,51 +429,18 @@ st.markdown(
         width: 100%;
         height: 48px;
         margin-bottom: 14px;
-        background: linear-gradient(135deg, #f8f9fb 0%, #edeff3 100%);
-        border: 3px solid rgba(0, 0, 0, 0.3);
+        background: linear-gradient(135deg, #ffe3e3 0%, #ffc9c9 100%);
+        border: 3px solid rgba(166, 25, 25, 0.4);
         border-width: 0 3px 3px 0;
         border-radius: 10px;
         box-shadow:
-            inset 0 1px 0 rgba(255, 255, 255, 0.9),
-            0 10px 18px rgba(0, 0, 0, 0.6);
+            inset 0 1px 0 rgba(255, 255, 255, 0.4),
+            0 10px 18px rgba(139, 0, 0, 0.25);
         font-size: 20px;
         font-weight: 700;
         letter-spacing: 0.02em;
-        color: #4b5160;
+        color: #5c0f13;
         transition: all 0.3s ease;
-    }
-    .pattern-chip-matched {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 100%;
-        height: 48px;
-        margin-bottom: 14px;
-        border-radius: 10px;
-        font-size: 20px;
-        font-weight: 700;
-        letter-spacing: 0.02em;
-        transition: all 0.3s ease;
-        background: linear-gradient(135deg, #ff6b6b 0%, #c62828 100%);
-        border: 3px solid rgba(80, 0, 0, 0.5);
-        border-width: 0 3px 3px 0;
-        color: #ffffff;
-        box-shadow:
-            inset 0 1px 0 rgba(255, 255, 255, 0.5),
-            0 10px 20px rgba(198, 40, 40, 0.7);
-        animation: pattern-flag-pulse 1.4s ease-in-out infinite;
-    }
-    @keyframes pattern-flag-pulse {
-        0%, 100% {
-            box-shadow:
-                inset 0 1px 0 rgba(255, 255, 255, 0.5),
-                0 10px 20px rgba(198, 40, 40, 0.7);
-        }
-        50% {
-            box-shadow:
-                inset 0 1px 0 rgba(255, 255, 255, 0.55),
-                0 12px 28px rgba(198, 40, 40, 1);
-        }
     }
     [data-testid="stAlert"] p, 
     [data-testid="stNotification"] p {
@@ -527,7 +527,7 @@ with col1:
                 st.session_state.show_product_data = True
                 st.session_state.show_ciphertext = False
                 st.session_state.ciphertext_content = None
-                st.session_state.matched_patterns = []
+                st.session_state.pattern_panel_matched = False
                 TEXT_LIMIT = 30
                 json_product_name = ITEMS[selected_item]["display_name"].lower()
                 
@@ -561,22 +561,9 @@ with combined_col:
         with col3:
             display_patterns = ["vape", "hookah", "njoy", "bomb", "e-juice", "smok", "kpod", "e-cigeratte"]
             st.subheader("Global Payment (AliPay+)")
-            with st.container(border=True, key="pattern-panel"):
-                num_cols = 2
-                cols = st.columns(num_cols)
-                pattern_placeholders = {}
-                for index, word in enumerate(display_patterns):
-                    col_idx = index % num_cols
-                    pattern_placeholders[word] = cols[col_idx].empty()
-                
-                render_pattern_grid()
-                st.markdown("""
-                    <div style="display: flex; gap: 20px; justify-content: center; align-items: center; margin-bottom: 10px;">
-                        <div style="width: 15px; height: 15px; background-color: white; border-radius: 50%;"></div>
-                        <div style="width: 15px; height: 15px; background-color: white; border-radius: 50%;"></div>
-                        <div style="width: 15px; height: 15px; background-color: white; border-radius: 50%;"></div>
-                    </div>""", unsafe_allow_html=True)
-            st.markdown("<p style='font-size: 30px; color: #E3E4E5;'>Showing 8 of 1024 restricted items</p>", unsafe_allow_html=True)
+            pattern_panel_placeholder = st.empty()
+            render_pattern_panel()
+            st.markdown("<p style='font-size: 25px; color: #E3E4E5;'>Showing 8 of 1024 <span style='font-size: 30px; color: #d92d35; font-weight: bold;'>restricted product names</span></p>", unsafe_allow_html=True)
    
 
         spm_button_placeholder = st.empty()
@@ -707,26 +694,11 @@ if st.session_state.run_pattern_matching:
                             pattern_batch_count = int(line.split("PATTERN_BATCH_COUNT:")[1].strip())
                         
                     if match_found:
-                        st.session_state.matching_results = True  
-
-                        # The encrypted computation only confirms THAT a pattern
-                        # matched, not which one - that's by design, since which
-                        # pattern matched is itself sensitive. Since we're on the
-                        # buyer's side and already hold the plaintext product data
-                        # pre-encryption, we can do a cheap local substring check
-                        # purely to decide which box to highlight in the UI.
-                        try:
-                            product_fields = json.loads(text_input)
-                            searchable_text = " ".join(str(v) for v in product_fields.values()).lower()
-                        except (json.JSONDecodeError, TypeError):
-                            searchable_text = text_input.lower()
-                        st.session_state.matched_patterns = [
-                            p for p in display_patterns if p.lower() in searchable_text
-                        ]
-
+                        st.session_state.matching_results = True
+                        st.session_state.pattern_panel_matched = True
                     else:
                         st.session_state.matching_results = False
-                        st.session_state.matched_patterns = []
+                        st.session_state.pattern_panel_matched = False
 
                     if st.session_state.matching_results is not None:
                         if ciphertext_path:
@@ -765,7 +737,7 @@ if st.session_state.run_pattern_matching:
                         render_wallet_balance()
                 
 
-                    render_pattern_grid()
+                    render_pattern_panel()
                 except subprocess.CalledProcessError as e:
                     # Parse error message for specific issues
                     error_output = e.stderr if e.stderr else e.stdout if hasattr(e, 'stdout') else ""
